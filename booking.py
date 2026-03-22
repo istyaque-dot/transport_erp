@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import datetime
 import time
@@ -16,11 +17,13 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    # 🟢 बदलाव: अब कोड फाइल की जगह Streamlit की तिजोरी (Secrets) से चाबी लेगा
+    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
-
 def save_booking_to_db(row_data):
     try:
         db = connect_to_sheet()
