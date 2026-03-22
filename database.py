@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -15,11 +16,13 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    # 🟢 यह लाइन अब फाइल की जगह Streamlit के Secrets से चाबी उठाएगी
+    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
-
 # --- 1. GOOGLE DRIVE UPLOAD ---
 def upload_to_drive(file_bytes, file_name, folder_id):
     try:
