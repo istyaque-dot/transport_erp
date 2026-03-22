@@ -1,0 +1,225 @@
+import streamlit as st
+import datetime
+import time
+import pandas as pd
+import requests
+import base64
+from oauth2client.service_account import ServiceAccountCredentials
+import gspread
+
+# ==========================================
+# ⚠️ Google Apps Script Web App URL
+# ==========================================
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
+
+# ==========================================
+# 🗄️ DATABASE FUNCTIONS
+# ==========================================
+@st.cache_resource(ttl=86400)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Khan_Transport_ERP")
+    return sheet
+
+def upload_to_drive(file_bytes, file_name):
+    if file_name.lower().endswith(".pdf"):
+        mime_type = "application/pdf"
+    elif file_name.lower().endswith(".png"):
+        mime_type = "image/png"
+    else:
+        mime_type = "image/jpeg"
+        
+    b64_data = base64.b64encode(file_bytes).decode('utf-8')
+    payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
+    
+    try:
+        res = requests.post(WEB_APP_URL, data=payload)
+        result = res.text.strip()
+        if "Error" not in result:
+            return result
+        else:
+            st.error(f"Google Script Error: {result}")
+            return None
+    except Exception as e: 
+        st.error(f"Upload Error: {e}")
+        return None
+
+def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage_amt):
+    try:
+        db = connect_to_sheet()
+        db.worksheet("Company_PODs").append_row([str(date_val), trip_id, gr_no, truck_no, "Submitted", int(shortage_amt)])
+        return True
+    except: return False
+
+def get_trip_summary(trip_id):
+    try:
+        db = connect_to_sheet()
+        
+        # 1. Booking Details
+        bk_data = db.worksheet("Bookings").get_all_records()
+        trip_bk = [r for r in bk_data if str(r['trip number']) == trip_id][0]
+        
+        # 2. Advance Details
+        adv_data = db.worksheet("Advances").get_all_values()
+        total_adv = sum([int(float(str(r[8]).replace(',', ''))) for r in adv_data[1:] if str(r[1]).strip() == trip_id])
+        
+        # 3. Owner Ledger Check (Shortage, Extra, aur POD Link)
+        df_owner = pd.DataFrame(db.worksheet("Owner_Ledger").get_all_values())
+        already_adj = 0
+        existing_pod_url = None  # 🟢 नया: पुरानी POD का लिंक निकालने के लिए
+        
+        if not df_owner.empty and len(df_owner.columns) > 5:
+            adj_rows = df_owner[df_owner.iloc[:, 1] == trip_id]
+            for _, r in adj_rows.iterrows():
+                desc = str(r.iloc[4])
+                if "Shortage" in desc or "Extra" in desc or "Detention" in desc:
+                    try: already_adj += int(float(str(r.iloc[5]).replace(',', '')))
+                    except: pass
+                elif "POD Link:" in desc:
+                    existing_pod_url = desc.replace("POD Link:", "").strip()
+
+        return trip_bk, total_adv, already_adj, existing_pod_url
+    except: return None, 0, 0, None
+
+def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank_name, remark):
+    try:
+        db.worksheet("Owner_Ledger").append_row([str(date_val), trip_id, gr_no, truck_no, f"Final Balance: {remark}", -int(amount)])
+        
+        base = [str(date_val), trip_id, gr_no, f"Final Pay: {truck_no}"]
+        s_name = {"Cash": "Cash_Ledger", "canara bank 311": "Canara_311_Ledger", "canara bank 41": "Canara_41_Ledger", "bob": "BOB_Ledger"}.get(bank_name)
+        if s_name:
+            db.worksheet(s_name).append_row(base + [-int(amount)], table_range="A1")
+            
+        c_amt = amount if bank_name == "Cash" else 0
+        b_amt = amount if bank_name != "Cash" else 0
+        
+        db.worksheet("Advances").append_row([
+            str(date_val), trip_id, truck_no, 0, f"Final Settlement ({remark})", c_amt, b_amt, bank_name, int(amount)
+        ])
+        return True
+    except: return False
+
+# ==========================================
+# 🖥️ USER INTERFACE
+# ==========================================
+def show_pod_page():
+    st.header("🏁 POD और फाइनल हिसाब (Settlement)")
+    
+    db = connect_to_sheet()
+    df_owner_raw = db.worksheet("Owner_Ledger").get_all_values()
+    df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
+    
+    if not df_owner.empty:
+        df_clean = df_owner[~df_owner.iloc[:, 4].str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].tail(50).iloc[::-1]
+        choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_clean.iterrows()]
+        
+        selected = st.selectbox("🔍 गाड़ी चुनें जिसका हिसाब फाइनल करना है या POD अपलोड करनी है", ["चुनें..."] + choices)
+        
+        if selected != "चुनें...":
+            parts = selected.split(" | ")
+            gr_no = parts[0].replace("GR: ", ""); truck_no = parts[1].replace("🚛 ", ""); trip_id = parts[3].replace("ID: ", "")
+            
+            trip_bk, total_adv, already_adj, existing_pod_url = get_trip_summary(trip_id)
+            
+            if trip_bk:
+                weight = float(trip_bk['weight'])
+                owner_freight = int(trip_bk['truck freight'])
+                munshiyana = int(weight * 1)
+                current_bal = (owner_freight - munshiyana - total_adv) + already_adj
+
+                st.subheader("📊 लाइव पासबुक")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("कुल भाड़ा", f"₹{owner_freight:,}")
+                c2.metric("एडवांस दे चुके", f"₹{total_adv:,}")
+                c3.metric("मुंशीयाना", f"₹{munshiyana:,}")
+                
+                # 🟢 परमानेंट डाउनलोड बटन (अगर बिल्टी पहले से अपलोड है)
+                if existing_pod_url:
+                    st.success("📄 इस गाड़ी की बिल्टी (POD) सिस्टम में सेव है।")
+                    st.link_button("📥 सेव की गई बिल्टी (POD) यहाँ से देखें / डाउनलोड करें", existing_pod_url, type="secondary")
+                
+                st.divider()
+
+                # 🟢 BALANCE ZERO CASE (Only POD Upload)
+                if current_bal <= 0:
+                    st.success("✅ इस गाड़ी का फुल एंड फाइनल हिसाब हो चुका है! (बैलेंस: ₹0)")
+                    st.info(f"कुल भाड़ा (मुंशीयाना हटाकर): ₹{owner_freight - munshiyana:,} | कुल पेमेंट (एडवांस + फाइनल): ₹{total_adv:,}")
+                    
+                    st.subheader("📄 नई बिल्टी (POD) अपलोड")
+                    st.write("अगर आपको दोबारा या कोई नई बिल्टी अपलोड करनी है, तो यहाँ से करें:")
+                    
+                    up_file = st.file_uploader("बिल्टी फोटो चुनें", type=["pdf", "jpg", "jpeg", "png"], key="pod_only_upload")
+                    
+                    if st.button("🚀 सिर्फ POD अपलोड करें", type="primary"):
+                        if up_file:
+                            with st.spinner("Drive पर अपलोड हो रहा है..."):
+                                f_name = f"POD_{gr_no}_{truck_no}.{up_file.name.split('.')[-1]}"
+                                d_id = upload_to_drive(up_file.read(), f_name)
+                                
+                                if d_id:
+                                    pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                    db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                    
+                                    st.cache_data.clear()
+                                    st.success("✅ बिल्टी सुरक्षित Google Drive पर सेव हो गई!")
+                                    time.sleep(2); st.rerun()
+                                else:
+                                    st.error("❌ अपलोड फेल हो गया!")
+                        else:
+                            st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+
+                # 🟢 BALANCE PENDING CASE (Settlement + POD Upload)
+                else:
+                    st.warning(f"💰 **अभी का बाकी बैलेंस: ₹{current_bal:,}**")
+
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.subheader("🛠️ शॉर्टेज / एक्स्ट्रा (Adjustment)")
+                        shortage = st.number_input("Shortage / कटी (- ₹)", min_value=0, step=50)
+                        extra_pay = st.number_input("Detention / Extra KM (+ ₹)", min_value=0, step=100)
+                        adj_remark = st.text_input("कारण (Remarks / Comments)", value="Final Settlement")
+                        
+                        final_payable = current_bal - shortage + extra_pay
+                        st.error(f"💵 **अब हाथ में देने वाली फाइनल रकम: ₹{final_payable:,}**")
+
+                    with col2:
+                        st.subheader("💳 पेमेंट और POD अपलोड")
+                        up_file = st.file_uploader("बिल्टी फोटो चुनें", type=["pdf", "jpg", "jpeg", "png"])
+                        pay_mode = st.selectbox("कहाँ से पेमेंट किया?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
+                        
+                        if st.button("✅ फुल एंड फाइनल (Close Account)", type="primary"):
+                            if pay_mode == "N/A" and final_payable > 0:
+                                st.error("⚠️ कृपया बैंक या Cash चुनें!")
+                            else:
+                                with st.spinner("हिसाब क्लोज हो रहा है..."):
+                                    t_date = str(datetime.date.today())
+                                    
+                                    if shortage > 0:
+                                        save_company_pod_status(t_date, trip_id, gr_no, truck_no, shortage)
+                                        db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"Shortage: {adj_remark}", -int(shortage)])
+                                    
+                                    if extra_pay > 0:
+                                        db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"Extra/Detention: {adj_remark}", int(extra_pay)])
+
+                                    if final_payable > 0:
+                                        save_balance_to_ledgers(db, t_date, trip_id, gr_no, truck_no, final_payable, pay_mode, adj_remark)
+                                    
+                                    if up_file:
+                                        f_name = f"POD_{gr_no}_{truck_no}.{up_file.name.split('.')[-1]}"
+                                        d_id = upload_to_drive(up_file.read(), f_name)
+                                        if d_id:
+                                            pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                            db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                    
+                                    st.cache_data.clear()
+                                    st.success(f"🎊 हिसाब बराबर! ₹{final_payable:,} का सेटलमेंट हो गया।")
+                                    time.sleep(2); st.rerun()
+    else:
+        st.info("कोई डेटा नहीं मिला।")
