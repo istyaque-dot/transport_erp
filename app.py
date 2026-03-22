@@ -11,16 +11,15 @@ st.set_page_config(page_title="Khan Transport ERP", page_icon="🚛", layout="wi
 def check_password():
     """लॉगिन फॉर्म दिखाता है और पासवर्ड चेक करता है।"""
     def password_entered():
-        # 🟢 यहाँ अपना मनचाहा यूजरनेम और पासवर्ड बदल सकते हैं
+        # 🟢 अपना यूजरनेम और पासवर्ड यहाँ चेक करें
         if st.session_state["username"] == "admin" and st.session_state["password"] == "khan786":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # सुरक्षा के लिए पासवर्ड डिलीट करें
+            del st.session_state["password"]
             del st.session_state["username"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # पहली बार लॉगिन फॉर्म दिखाना
         st.markdown("<h2 style='text-align: center;'>🔐 Khan Transport ERP Login</h2>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -31,9 +30,7 @@ def check_password():
         return False
     
     elif not st.session_state["password_correct"]:
-        # गलत पासवर्ड होने पर दोबारा दिखाना
         st.error("❌ गलत यूजरनेम या पासवर्ड!")
-        st.markdown("<h2 style='text-align: center;'>🔐 Login Again</h2>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
@@ -42,16 +39,14 @@ def check_password():
                 st.form_submit_button("Login", on_click=password_entered)
         return False
     
-    else:
-        # पासवर्ड सही है
-        return True
+    return True
 
 # ==========================================
-# 🖥️ MAIN ERP APP (Only shown if logged in)
+# 🖥️ MAIN ERP APP (ये सब IF के अंदर होना चाहिए)
 # ==========================================
 
 if check_password():
-    # लॉगिन सफल होने के बाद ही ये फाइलें इम्पोर्ट होंगी
+    # 🟢 ध्यान दें: नीचे की सारी लाइनें अब IF के अंदर हैं (Space देकर आगे खिसकाई गई हैं)
     from booking import show_booking_page
     from advance import show_advance_page
     from receivable import show_receivable_page
@@ -61,11 +56,9 @@ if check_password():
     from reports import show_reports_page
     from pod import show_pod_page  
 
-    # --- SIDEBAR ---
     st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Khan ERP</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<p style='text-align: center; color: gray;'>Today: {datetime.date.today()}</p>", unsafe_allow_html=True)
     
-    # लॉगआउट बटन
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
@@ -83,7 +76,6 @@ if check_password():
         "POD और फाइनल हिसाब"
     ])
 
-    # --- PAGE NAVIGATION ---
     if choice == "डैशबोर्ड":
         show_dashboard_page()
     elif choice == "बुकिंग":
