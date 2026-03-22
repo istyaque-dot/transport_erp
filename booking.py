@@ -1,9 +1,9 @@
-import json
 import streamlit as st
 import datetime
 import time
 import pandas as pd
 import gspread
+import json  # 🟢 नया जोड़ा गया है
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
@@ -17,13 +17,13 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 बदलाव: अब कोड फाइल की जगह Streamlit की तिजोरी (Secrets) से चाबी लेगा
+    # 🟢 ऑनलाइन तिजोरी (Secrets) से चाबी उठाने का कोड
     creds_dict = json.loads(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
+
 def save_booking_to_db(row_data):
     try:
         db = connect_to_sheet()
@@ -218,23 +218,27 @@ def show_booking_page():
                 row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
                 
                 with st.form("edit_booking_form"):
+                    
+                    # 🟢 सुरक्षा कवच (Empty Cell Fix)
+                    def s_int(val):
+                        try: return int(float(val))
+                        except: return 0
+
                     c1, c2 = st.columns(2)
                     with c1:
                         e_date = st.text_input("तारीख", str(row_data.iloc[0]))
                         e_from = st.text_input("कहाँ से", str(row_data.iloc[1]))
                         e_company = st.selectbox("कंपनी", ["Universal Industries", "Other"], index=0 if str(row_data.iloc[2]) == "Universal Industries" else 1)
-                        e_weight = st.number_input("माल का वज़न", value=int(row_data.iloc[5]), step=1)
-                        e_comp_rate = st.number_input("कंपनी रेट", value=int(float(row_data.iloc[4])), step=1) 
-                        e_uni_amt = st.number_input("Universal (₹)", value=int(row_data.iloc[9]), step=10)
+                        e_weight = st.number_input("माल का वज़न", value=s_int(row_data.iloc[5]), step=1)
+                        e_comp_rate = st.number_input("कंपनी रेट", value=s_int(row_data.iloc[4]), step=1) 
+                        e_uni_amt = st.number_input("Universal (₹)", value=s_int(row_data.iloc[9]), step=10)
                     with c2:
                         e_truck = st.text_input("गाड़ी नंबर", str(row_data.iloc[6]))
                         e_to = st.text_input("कहाँ तक", str(row_data.iloc[7]))
                         e_gr = st.text_input("GR Number", str(row_data.iloc[8]))
-                        e_owner_rate = st.number_input("गाड़ी वाला रेट", value=int(float(row_data.iloc[3])), step=1) 
+                        e_owner_rate = st.number_input("गाड़ी वाला रेट", value=s_int(row_data.iloc[3]), step=1) 
                         e_comments = st.text_input("टिप्पणी", str(row_data.iloc[10]))
-                        try: e_ish_val = int(row_data.iloc[15])
-                        except: e_ish_val = 0
-                        e_ish_amt = st.number_input("Ishtyaque Profit (₹)", min_value=0, value=e_ish_val, step=100)
+                        e_ish_amt = st.number_input("Ishtyaque Profit (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
                         
                     e_comp_freight = int(e_weight * e_comp_rate) + e_uni_amt
                     e_owner_freight = int(e_weight * e_owner_rate)
