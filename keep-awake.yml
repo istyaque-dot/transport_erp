@@ -1,0 +1,16 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Runs every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Manual trigger option
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -s https://khan-transport-erp-9cjpsh5pqjmjn6a9wnrgyh.streamlit.app > /dev/null
+          echo "App pinged successfully at $(date)"
