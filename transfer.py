@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
-# 🗄️ DATABASE FUNCTIONS (अब सीधा यहीं पर)
+# 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
 @st.cache_resource(ttl=86400)
@@ -54,7 +54,8 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
             "bob": "BOB_Ledger", 
             "Shekh Filling (Pump)": "Shekh_Filling_Ledger",
             "Ishtyaque Ledger": "Ishtyaque_Ledger",
-            "Universal Ledger": "Universal_Ledger"
+            "Universal Ledger": "Universal_Ledger",
+            "Canara 1747": "canara_1747"  # 🟢 नया अकाउंट यहाँ जुड़ गया
         }
         
         f_s = s_map.get(from_acc)
@@ -62,15 +63,23 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
         
         # जहाँ से पैसा कटा (Sender)
         if f_s:
-            db.worksheet(f_s).append_row([str(date_val), "Transfer", "Debit", f"To: {to_acc} | {remarks}", -amt], table_range="A1")
+            if from_acc == "Canara 1747":
+                # Canara 1747 का स्पेशल 4-कॉलम फॉर्मेट: Date, Comment, To/From, Amount
+                db.worksheet(f_s).append_row([str(date_val), remarks if remarks else "Transfer Out", f"To: {to_acc}", -amt], table_range="A1")
+            else:
+                # नॉर्मल 5-कॉलम फॉर्मेट
+                db.worksheet(f_s).append_row([str(date_val), "Transfer", "Debit", f"To: {to_acc} | {remarks}", -amt], table_range="A1")
         
         # जहाँ पैसा गया (Receiver)
         if t_s:
-            # Ishtyaque और Universal के 6-कॉलम लेजर के लिए
-            if to_acc in ["Ishtyaque Ledger", "Universal Ledger"]:
+            if to_acc == "Canara 1747":
+                # Canara 1747 का स्पेशल 4-कॉलम फॉर्मेट: Date, Comment, To/From, Amount
+                db.worksheet(t_s).append_row([str(date_val), remarks if remarks else "Transfer In", f"From: {from_acc}", amt], table_range="A1")
+            elif to_acc in ["Ishtyaque Ledger", "Universal Ledger"]:
+                # Ishtyaque और Universal के 6-कॉलम लेजर के लिए (इसे बिल्कुल नहीं छेड़ा गया है)
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "N/A", "N/A", f"From: {from_acc}", amt], table_range="A1")
             else:
-                db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc}", amt], table_range="A1")
+                db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc} | {remarks}", amt], table_range="A1")
         
         st.cache_data.clear()
         return True
@@ -81,7 +90,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
 # ==========================================
 
 def show_transfer_page():
-    # 🟢 CSS Injection (डब्बों के बीच खाली जगह कम करने के लिए)
+    # 🟢 CSS Injection
     st.markdown("""
         <style>
             div[data-testid="stForm"] > div > div {
@@ -104,27 +113,30 @@ def show_transfer_page():
 
     st.markdown("### 🏦 ट्रांसफर करने से पहले खातों का लाइव बैलेंस देखें:")
     
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # 🟢 नया अकाउंट दिखाने के लिए कॉलम्स को 6 कर दिया गया है
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     cash_stat = get_ledger_stats("Cash_Ledger")
     c311_stat = get_ledger_stats("Canara_311_Ledger")
     c41_stat = get_ledger_stats("Canara_41_Ledger")
     bob_stat = get_ledger_stats("BOB_Ledger")
+    c1747_stat = get_ledger_stats("canara_1747")  # नया कैनरा 1747 बैलेंस
     pump_stat = get_ledger_stats("Shekh_Filling_Ledger")
     
-    c1.metric("💵 Cash (गल्ला)", f"₹{cash_stat['balance']:,}")
+    c1.metric("💵 Cash", f"₹{cash_stat['balance']:,}")
     c2.metric("🏦 Canara 311", f"₹{c311_stat['balance']:,}")
     c3.metric("🏦 Canara 41", f"₹{c41_stat['balance']:,}")
     c4.metric("🏦 BOB", f"₹{bob_stat['balance']:,}")
+    c5.metric("🏦 Canara 1747", f"₹{c1747_stat['balance']:,}") # 🟢 नया मीटर जुड़ गया
     
     if pump_stat['balance'] < 0:
-        c5.metric("⛽ Pump (उधार)", f"₹{abs(pump_stat['balance']):,}", "देना बाकी है ⏳", delta_color="inverse")
+        c6.metric("⛽ Pump (उधार)", f"₹{abs(pump_stat['balance']):,}", "देना बाकी है ⏳", delta_color="inverse")
     else:
-        c5.metric("⛽ Pump (हिसाब)", f"₹{pump_stat['balance']:,}", "क्लियर ✅", delta_color="normal")
+        c6.metric("⛽ Pump (हिसाब)", f"₹{pump_stat['balance']:,}", "क्लियर ✅", delta_color="normal")
 
     st.write("---")
 
-    # 🟢 SESSION STATES (फॉर्म क्लियर करने के लिए)
+    # 🟢 SESSION STATES 
     if "tf_ck" not in st.session_state: st.session_state.tf_ck = 0
     if "show_tf_confirm" not in st.session_state: st.session_state.show_tf_confirm = False
     
@@ -137,9 +149,11 @@ def show_transfer_page():
             
             col1, col2 = st.columns(2)
             with col1:
-                from_acc = st.selectbox("कहाँ से पैसा कटा (Sender)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob"])
+                # 🟢 Sender लिस्ट में Canara 1747 जोड़ दिया
+                from_acc = st.selectbox("कहाँ से पैसा कटा (Sender)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
             with col2:
-                to_acc = st.selectbox("कहाँ पैसा गया (Receiver)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Shekh Filling (Pump)", "Ishtyaque Ledger", "Universal Ledger"])
+                # 🟢 Receiver लिस्ट में Canara 1747 जोड़ दिया
+                to_acc = st.selectbox("कहाँ पैसा गया (Receiver)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747", "Shekh Filling (Pump)", "Ishtyaque Ledger", "Universal Ledger"])
 
             t_amt = st.number_input("कितना अमाउंट भेजा (₹)?", min_value=0, step=500)
             t_remarks = st.text_input("विवरण (Remarks / UTR No.)")
@@ -161,7 +175,7 @@ def show_transfer_page():
                 st.session_state.show_tf_confirm = True
                 st.rerun()
 
-    # 2. कन्फर्मेशन वाली स्क्रीन (बटन गायब करने वाला सिस्टम)
+    # 2. कन्फर्मेशन वाली स्क्रीन
     if st.session_state.show_tf_confirm:
         d = st.session_state.tf_temp_data
         st.warning(f"❓ क्या आप पक्का **₹{d['t_amt']:,}** को **{d['from_acc']}** से **{d['to_acc']}** में ट्रांसफर करना चाहते हैं?")
@@ -174,17 +188,16 @@ def show_transfer_page():
             cancel_clicked = c2.button("❌ कैंसिल")
 
         if save_clicked:
-            action_container.empty()  # क्लिक होते ही बटन गायब
+            action_container.empty() 
             with st.spinner("⏳ ट्रांसफर हो रहा है, कृपया 2 सेकंड रुकें..."):
                 if save_transfer_ledgers(d['t_date'], d['from_acc'], d['to_acc'], d['t_amt'], d['t_remarks']):
                     st.success(f"✅ ₹{d['t_amt']:,} सफलतापूर्वक {d['from_acc']} से {d['to_acc']} में ट्रांसफर हो गए!")
                     time.sleep(1.5)
-                    # फॉर्म साफ़ (Clear) करने का कोड
                     st.session_state.show_tf_confirm = False
                     st.session_state.tf_ck += 1 
                     st.rerun()
                 else:
-                    st.error("❌ कुछ तकनीकी ख़राबी हुई। कृपया गूगल शीट चेक करें।")
+                    st.error("❌ कुछ तकनीकी ख़राबी हुई। कृपया गूगल शीट चेक करें।")
                     
         if cancel_clicked:
             st.session_state.show_tf_confirm = False
