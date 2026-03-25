@@ -45,7 +45,8 @@ def show_reports_page():
     with tab1:
         st.markdown("### 📊 लेजर स्टेटमेंट")
         col1, col2, col3 = st.columns(3)
-        with col1: account_type = st.selectbox("खाता चुनें:", ["Cash_Ledger", "Canara_311_Ledger", "Canara_41_Ledger", "BOB_Ledger", "Shekh_Filling_Ledger", "Company_Ledger", "Owner_Ledger", "Ishtyaque_Ledger", "Universal_Ledger"])
+        # 🟢 बदलाव: यहाँ ड्रॉपडाउन में 'canara_1747' जोड़ दिया गया है
+        with col1: account_type = st.selectbox("खाता चुनें:", ["Cash_Ledger", "Canara_311_Ledger", "Canara_41_Ledger", "BOB_Ledger", "Shekh_Filling_Ledger", "Company_Ledger", "Owner_Ledger", "Ishtyaque_Ledger", "Universal_Ledger", "canara_1747"])
         with col2: start_date = st.date_input("कब से?", datetime.date.today().replace(day=1), key="rep_start")
         with col3: end_date = st.date_input("कब तक?", datetime.date.today(), key="rep_end")
 
