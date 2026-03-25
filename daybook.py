@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
-# 🗄️ DATABASE FUNCTIONS (अब सीधा यहीं पर)
+# 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
 @st.cache_resource(ttl=86400)
@@ -39,19 +39,30 @@ def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, r
         final_amount = int(amount) if entry_type == "Credit (पैसा आया / जमा)" else -int(amount)
         base_data = [str(date_val), "Manual Entry", str(entry_type), f"{category} - {remarks}" if remarks else category]
         
+        # 🟢 नया अकाउंट Canara 1747 यहाँ जुड़ गया
         s_name = {
             "Cash":"Cash_Ledger", 
             "canara bank 311":"Canara_311_Ledger", 
             "canara bank 41":"Canara_41_Ledger", 
-            "bob":"BOB_Ledger"
+            "bob":"BOB_Ledger",
+            "Canara 1747":"canara_1747"
         }.get(account_name)
         
         if s_name:
-            db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
+            if account_name == "Canara 1747":
+                # Canara 1747 का स्पेशल 4-कॉलम फॉर्मेट: Date, Comment, To/From, Amount
+                comment = f"{category} - {remarks}" if remarks else category
+                to_from_text = "From Daybook (In)" if entry_type == "Credit (पैसा आया / जमा)" else "From Daybook (Out)"
+                db.worksheet(s_name).append_row([str(date_val), comment, to_from_text, final_amount], table_range="A1")
+            else:
+                # पुराने लेजर्स का नॉर्मल 5-कॉलम फॉर्मेट
+                db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
         
         st.cache_data.clear()
         return True
-    except: return False
+    except Exception as e: 
+        print(f"Error saving ledger: {e}")
+        return False
 
 # ==========================================
 # 🖥️ USER INTERFACE (डे बुक पेज)
@@ -73,16 +84,20 @@ def show_daybook_page():
         col1, col2 = st.columns(2)
         with col1:
             entry_type = st.radio("एंट्री का प्रकार चुनें:", ["Debit (पैसा गया / खर्चा)", "Credit (पैसा आया / जमा)"], horizontal=True)
-            account_name = st.selectbox("किस खाते से लेन-देन हुआ?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob"])
+            # 🟢 खाते की लिस्ट में Canara 1747 जोड़ दिया गया है
+            account_name = st.selectbox("किस खाते से लेन-देन हुआ?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
             
         with col2:
             amount = st.number_input("अमाउंट (₹)", min_value=1, step=100)
+            # 🟢 कैटेगरी में Car EMI और Saving जोड़ दिए गए हैं
             category = st.selectbox("किस मद (Category) में?", 
                                     ["ऑफिस खर्च (Office Expense)", 
                                      "गाड़ी मेंटेनेंस / रिपेयर", 
                                      "ड्राइवर सैलरी / इनाम", 
                                      "लोन / उधार (Borrow/Lend)", 
                                      "मालिक का खर्च (Owner Drawings)", 
+                                     "Car EMI (गाड़ी की किश्त)",
+                                     "Personal Saving (बचत)",
                                      "अन्य (Others)"])
             
         remarks = st.text_input("विवरण (Remarks / किसको दिया या किससे लिया?)")
@@ -116,6 +131,8 @@ def show_daybook_page():
                     time.sleep(2)
                     st.session_state.db_ck += 1
                     st.rerun()
+                else:
+                    st.error("❌ कुछ तकनीकी ख़राबी हुई। कृपया गूगल शीट चेक करें।")
                 
         if c2.button("❌ कैंसिल", key=f"no_db_{c}"):
             st.session_state.db_confirm = False
