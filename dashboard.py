@@ -1,30 +1,193 @@
 import streamlit as st
 import pandas as pd
-from database import get_dashboard_stats, get_all_trips  # यहाँ get_all_trips जुड़ गया है
+from database import get_dashboard_stats, get_all_trips, get_ledger_stats
 
 def show_dashboard_page():
-    st.header("📊 डैशबोर्ड (Dashboard)")
+    st.markdown("""
+        <style>
+            /* Compact spacing */
+            .stMetric { padding: 0.5rem 0; }
+            .element-container { margin-bottom: 0.5rem; }
+            
+            /* Custom metric styling */
+            [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 600; }
+            [data-testid="stMetricLabel"] { font-size: 0.9rem; color: #888; }
+            
+            /* Clean table */
+            .dataframe { font-size: 0.9rem; }
+            
+            /* Section headers */
+            .section-header { 
+                background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
+                color: white;
+                padding: 0.75rem 1rem;
+                border-radius: 0.5rem;
+                margin: 1rem 0 0.5rem 0;
+                font-size: 1.1rem;
+                font-weight: 600;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.title("📊 Khan Transport - Dashboard")
+    
+    # --- BUSINESS OVERVIEW ---
+    st.markdown('<div class="section-header">💼 बिज़नेस का हाल (Business Overview)</div>', unsafe_allow_html=True)
     
     stats = get_dashboard_stats()
     
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("कुल गाड़ियाँ", stats.get("total_trips", 0))
-    col2.metric("कुल कंपनी भाड़ा", f"₹{stats.get('total_freight', 0):,}")
-    col3.metric("कुल एडवांस दिया", f"₹{stats.get('total_advance', 0):,}")
-    col4.metric("कुल रिसीव (क्लियर)", f"₹{stats.get('total_cleared', 0):,}")
     
-    st.write("---")
-    st.subheader("📋 हाल ही की बुकिंग (Recent Bookings)")
+    with col1:
+        st.metric(
+            label="कुल गाड़ियाँ (Total Trips)",
+            value=stats.get("total_trips", 0),
+            delta=None
+        )
+    
+    with col2:
+        freight = stats.get('total_freight', 0)
+        st.metric(
+            label="कुल कंपनी भाड़ा (Total Freight)",
+            value=f"₹{freight:,}",
+            delta=None
+        )
+    
+    with col3:
+        advance = stats.get('total_advance', 0)
+        st.metric(
+            label="कुल एडवांस दिया (Total Advance)",
+            value=f"₹{advance:,}",
+            delta=None
+        )
+    
+    with col4:
+        cleared = stats.get('total_cleared', 0)
+        st.metric(
+            label="कुल पेमेंट आया (Total Received)",
+            value=f"₹{cleared:,}",
+            delta=None
+        )
+    
+    # --- ACCOUNT BALANCES ---
+    st.markdown('<div class="section-header">🏦 खातों का बैलेंस (Account Balances)</div>', unsafe_allow_html=True)
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    cash = get_ledger_stats("Cash_Ledger")
+    c311 = get_ledger_stats("Canara_311_Ledger")
+    c41 = get_ledger_stats("Canara_41_Ledger")
+    bob = get_ledger_stats("BOB_Ledger")
+    pump = get_ledger_stats("Shekh_Filling_Ledger")
+    
+    with col1:
+        cash_bal = cash.get("balance", 0)
+        st.metric("💵 Cash", f"₹{cash_bal:,}")
+    
+    with col2:
+        c311_bal = c311.get("balance", 0)
+        st.metric("🏦 Canara 311", f"₹{c311_bal:,}")
+    
+    with col3:
+        c41_bal = c41.get("balance", 0)
+        st.metric("🏦 Canara 41", f"₹{c41_bal:,}")
+    
+    with col4:
+        bob_bal = bob.get("balance", 0)
+        st.metric("🏦 BOB", f"₹{bob_bal:,}")
+    
+    with col5:
+        pump_bal = pump.get("balance", 0)
+        if pump_bal < 0:
+            st.metric("⛽ Pump", f"₹{abs(pump_bal):,}", "देना बाकी", delta_color="inverse")
+        else:
+            st.metric("⛽ Pump", f"₹{pump_bal:,}", "क्लियर", delta_color="normal")
+    
+    # Total Cash Available
+    total_available = cash_bal + c311_bal + c41_bal + bob_bal
+    st.info(f"💰 **कुल उपलब्ध पैसा (Total Available Cash):** ₹{total_available:,}")
+    
+    # --- PENDING PAYMENTS SUMMARY ---
+    st.markdown('<div class="section-header">⏳ पेंडिंग पेमेंट्स (Pending Payments)</div>', unsafe_allow_html=True)
     
     df = get_all_trips()
     if not df.empty:
-        df_display = df.tail(10).iloc[::-1]
+        # Company से आना बाकी
+        company_pending = freight - cleared
+        
+        # Owner को देना बाकी (rough estimate)
+        owner_pending = advance  # This is a simplified view
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "🏢 कंपनी से आना बाकी",
+                f"₹{company_pending:,}",
+                "Receivable Pending"
+            )
+        with col2:
+            st.metric(
+                "🚛 मालिकों को देना बाकी",
+                f"₹{owner_pending:,}",
+                "Owner Payable (Approx)"
+            )
+    
+    # --- RECENT BOOKINGS ---
+    st.markdown('<div class="section-header">📋 हाल की बुकिंग (Recent Bookings - Last 15)</div>', unsafe_allow_html=True)
+    
+    if not df.empty:
+        df_display = df.tail(15).iloc[::-1].copy()
+        
         try:
-            # 5 ज़रूरी चीज़ें दिखाना: Date, Truck, To, Company, Comp_Freight
-            display_cols = df_display.iloc[:, [0, 6, 7, 2, 11]]
-            display_cols.columns = ["तारीख", "गाड़ी नंबर", "कहाँ तक", "कंपनी", "भाड़ा"]
-            st.dataframe(display_cols, use_container_width=True)
-        except:
+            # Select important columns only
+            display_data = []
+            for idx, row in df_display.iterrows():
+                display_data.append({
+                    "तारीख": row.iloc[0],
+                    "गाड़ी": row.iloc[6],
+                    "कहाँ तक": row.iloc[7],
+                    "GR नंबर": row.iloc[8] if row.iloc[8] else "-",
+                    "कंपनी": row.iloc[2],
+                    "भाड़ा": f"₹{int(row.iloc[11]):,}",
+                    "Trip ID": row.iloc[14]
+                })
+            
+            df_clean = pd.DataFrame(display_data)
+            
+            # Display as table with alternating colors
+            st.dataframe(
+                df_clean,
+                use_container_width=True,
+                hide_index=True,
+                height=400
+            )
+            
+        except Exception as e:
             st.dataframe(df_display, use_container_width=True)
     else:
         st.info("अभी कोई गाड़ी लोड नहीं हुई है।")
+    
+    # --- QUICK ACTIONS ---
+    st.markdown('<div class="section-header">⚡ त्वरित कार्रवाई (Quick Actions)</div>', unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("🚛 नई बुकिंग", use_container_width=True):
+            st.switch_page("pages/booking.py") if hasattr(st, 'switch_page') else st.info("बुकिंग page पर जाएं")
+    
+    with col2:
+        if st.button("💸 एडवांस दें", use_container_width=True):
+            st.switch_page("pages/advance.py") if hasattr(st, 'switch_page') else st.info("एडवांस page पर जाएं")
+    
+    with col3:
+        if st.button("📥 पेमेंट लें", use_container_width=True):
+            st.switch_page("pages/receivable.py") if hasattr(st, 'switch_page') else st.info("रिसीवेबल page पर जाएं")
+    
+    with col4:
+        if st.button("🏁 POD & Settlement", use_container_width=True):
+            st.switch_page("pages/pod.py") if hasattr(st, 'switch_page') else st.info("POD page पर जाएं")
+    
+    # --- FOOTER INFO ---
+    st.markdown("---")
+    st.caption("💡 **Tip:** सभी pages sidebar से access कर सकते हैं। Dashboard हर minute refresh होता है।")
