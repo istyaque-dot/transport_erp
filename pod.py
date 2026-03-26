@@ -7,6 +7,8 @@ import requests
 import base64
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
+from PIL import Image  # 🟢 नया: फोटो को PDF बनाने के लिए
+import io              # 🟢 नया: फाइल को मेमोरी में प्रोसेस करने के लिए
 
 # ==========================================
 # ⚠️ Google Apps Script Web App URL
@@ -23,7 +25,6 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 FIX: json.loads हटा दिया गया है क्योंकि Streamlit अब सीधा डिक्शनरी देता है
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
@@ -54,6 +55,35 @@ def upload_to_drive(file_bytes, file_name):
         st.error(f"Upload Error: {e}")
         return None
 
+# 🟢 नया फंक्शन: जो कई सारी फोटो को मिलाकर 1 PDF बनाएगा
+def prepare_pod_file(uploaded_files):
+    if not uploaded_files:
+        return None, None
+    
+    # अगर सिर्फ 1 फाइल है और वो पहले से PDF है, तो उसे सीधा भेज दो
+    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
+        return uploaded_files[0].read(), "pdf"
+    
+    # अगर एक या एक से ज़्यादा फोटो (Images) हैं, तो सबको मिलाकर PDF बनाओ
+    images = []
+    for file in uploaded_files:
+        if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
+            img = Image.open(file)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            images.append(img)
+    
+    if images:
+        pdf_bytes = io.BytesIO()
+        if len(images) == 1:
+            images[0].save(pdf_bytes, format="PDF")
+        else:
+            # पहली फोटो में बाकी सारी फोटो जोड़ दो
+            images[0].save(pdf_bytes, format="PDF", save_all=True, append_images=images[1:])
+        return pdf_bytes.getvalue(), "pdf"
+    
+    return None, None
+
 def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage_amt):
     try:
         db = connect_to_sheet()
@@ -76,7 +106,7 @@ def get_trip_summary(trip_id):
         # 3. Owner Ledger Check (Shortage, Extra, aur POD Link)
         df_owner = pd.DataFrame(db.worksheet("Owner_Ledger").get_all_values())
         already_adj = 0
-        existing_pod_url = None  # 🟢 नया: पुरानी POD का लिंक निकालने के लिए
+        existing_pod_url = None 
         
         if not df_owner.empty and len(df_owner.columns) > 5:
             adj_rows = df_owner[df_owner.iloc[:, 1] == trip_id]
@@ -143,7 +173,6 @@ def show_pod_page():
                 c2.metric("एडवांस दे चुके", f"₹{total_adv:,}")
                 c3.metric("मुंशीयाना", f"₹{munshiyana:,}")
                 
-                # 🟢 परमानेंट डाउनलोड बटन (अगर बिल्टी पहले से अपलोड है)
                 if existing_pod_url:
                     st.success("📄 इस गाड़ी की बिल्टी (POD) सिस्टम में सेव है।")
                     st.link_button("📥 सेव की गई बिल्टी (POD) यहाँ से देखें / डाउनलोड करें", existing_pod_url, type="secondary")
@@ -156,25 +185,32 @@ def show_pod_page():
                     st.info(f"कुल भाड़ा (मुंशीयाना हटाकर): ₹{owner_freight - munshiyana:,} | कुल पेमेंट (एडवांस + फाइनल): ₹{total_adv:,}")
                     
                     st.subheader("📄 नई बिल्टी (POD) अपलोड")
-                    st.write("अगर आपको दोबारा या कोई नई बिल्टी अपलोड करनी है, तो यहाँ से करें:")
+                    st.write("अगर बिल्टी में कई पन्ने (Pages) हैं, तो एक साथ सारी फोटो सेलेक्ट करें। सिस्टम खुद उसकी एक PDF बना देगा!")
                     
-                    up_file = st.file_uploader("बिल्टी फोटो चुनें", type=["pdf", "jpg", "jpeg", "png"], key="pod_only_upload")
+                    # 🟢 बदलाव: accept_multiple_files=True लगा दिया है
+                    up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only_upload")
                     
                     if st.button("🚀 सिर्फ POD अपलोड करें", type="primary"):
-                        if up_file:
-                            with st.spinner("Drive पर अपलोड हो रहा है..."):
-                                f_name = f"POD_{gr_no}_{truck_no}.{up_file.name.split('.')[-1]}"
-                                d_id = upload_to_drive(up_file.read(), f_name)
+                        if up_files:
+                            with st.spinner("बिल्टी की PDF बन रही है और Drive पर सेव हो रही है..."):
+                                # 🟢 नया PDF मेकर फंक्शन कॉल किया
+                                final_bytes, file_ext = prepare_pod_file(up_files)
                                 
-                                if d_id:
-                                    pod_url = f"https://drive.google.com/file/d/{d_id}/view"
-                                    db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                if final_bytes:
+                                    f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
+                                    d_id = upload_to_drive(final_bytes, f_name)
                                     
-                                    st.cache_data.clear()
-                                    st.success("✅ बिल्टी सुरक्षित Google Drive पर सेव हो गई!")
-                                    time.sleep(2); st.rerun()
+                                    if d_id:
+                                        pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                        db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                        
+                                        st.cache_data.clear()
+                                        st.success("✅ सारी फोटो जुड़कर एक PDF बन गई और सुरक्षित सेव हो गई!")
+                                        time.sleep(2); st.rerun()
+                                    else:
+                                        st.error("❌ अपलोड फेल हो गया!")
                                 else:
-                                    st.error("❌ अपलोड फेल हो गया!")
+                                    st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
                         else:
                             st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
 
@@ -195,14 +231,16 @@ def show_pod_page():
 
                     with col2:
                         st.subheader("💳 पेमेंट और POD अपलोड")
-                        up_file = st.file_uploader("बिल्टी फोटो चुनें", type=["pdf", "jpg", "jpeg", "png"])
+                        st.write("कई पन्नों के लिए एक साथ सारी फोटो सेलेक्ट करें।")
+                        # 🟢 बदलाव: accept_multiple_files=True लगा दिया है
+                        up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True)
                         pay_mode = st.selectbox("कहाँ से पेमेंट किया?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
                         
                         if st.button("✅ फुल एंड फाइनल (Close Account)", type="primary"):
                             if pay_mode == "N/A" and final_payable > 0:
                                 st.error("⚠️ कृपया बैंक या Cash चुनें!")
                             else:
-                                with st.spinner("हिसाब क्लोज हो रहा है..."):
+                                with st.spinner("हिसाब क्लोज हो रहा है और PDF बन रही है..."):
                                     t_date = str(datetime.date.today())
                                     
                                     if shortage > 0:
@@ -215,12 +253,15 @@ def show_pod_page():
                                     if final_payable > 0:
                                         save_balance_to_ledgers(db, t_date, trip_id, gr_no, truck_no, final_payable, pay_mode, adj_remark)
                                     
-                                    if up_file:
-                                        f_name = f"POD_{gr_no}_{truck_no}.{up_file.name.split('.')[-1]}"
-                                        d_id = upload_to_drive(up_file.read(), f_name)
-                                        if d_id:
-                                            pod_url = f"https://drive.google.com/file/d/{d_id}/view"
-                                            db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                    if up_files:
+                                        # 🟢 नया PDF मेकर फंक्शन कॉल किया
+                                        final_bytes, file_ext = prepare_pod_file(up_files)
+                                        if final_bytes:
+                                            f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
+                                            d_id = upload_to_drive(final_bytes, f_name)
+                                            if d_id:
+                                                pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                                db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                     
                                     st.cache_data.clear()
                                     st.success(f"🎊 हिसाब बराबर! ₹{final_payable:,} का सेटलमेंट हो गया।")
