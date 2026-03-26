@@ -16,8 +16,8 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 बदलाव: अब कोड Streamlit की तिजोरी (Secrets) से चाबी लेगा
-    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    # 🟢 FIX: json.loads हटा दिया गया है क्योंकि Streamlit अब सीधा डिक्शनरी देता है
+    creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
     client = gspread.authorize(creds)
