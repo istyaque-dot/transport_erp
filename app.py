@@ -2,7 +2,7 @@ import streamlit as st
 import datetime
 
 # --- पेज कॉन्फ़िगरेशन ---
-st.set_page_config(page_title="Khan Transport ERP", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔒 LOGIN SYSTEM LOGIC
