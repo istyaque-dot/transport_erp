@@ -76,89 +76,88 @@ def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_
     except: return False
 
 # ==========================================
-# 🖥️ USER INTERFACE
+# 🖥️ USER INTERFACE (Function में पैक किया गया है)
 # ==========================================
-st.set_page_config(page_title="कंपनी खाता", page_icon="🏢", layout="wide")
+def show_company_page():
+    st.header("🏢 कंपनी खाता और सेटलमेंट")
+    st.write("यहाँ आप देख सकते हैं कि बाज़ार में कुल कितना पैसा फंसा है और किसी भी GR का पेमेंट रिसीव कर सकते हैं।")
 
-st.header("🏢 कंपनी खाता और सेटलमेंट")
-st.write("यहाँ आप देख सकते हैं कि बाज़ार में कुल कितना पैसा फंसा है और किसी भी GR का पेमेंट रिसीव कर सकते हैं।")
+    # 1. ऊपर मेन मीटर
+    total_out = get_total_company_outstanding()
+    if total_out > 0:
+        st.error(f"🚨 **बाज़ार (कंपनियों) में कुल फंसा हुआ पैसा: ₹{total_out:,}**")
+    else:
+        st.success(f"✅ **बाज़ार में कोई उधारी नहीं है! (₹0)**")
 
-# 1. ऊपर मेन मीटर (Total Outstanding)
-total_out = get_total_company_outstanding()
-if total_out > 0:
-    st.error(f"🚨 **बाज़ार (कंपनियों) में कुल फंसा हुआ पैसा: ₹{total_out:,}**")
-else:
-    st.success(f"✅ **बाज़ार में कोई उधारी नहीं है! (₹0)**")
+    st.divider()
 
-st.divider()
+    # 2. गाड़ी/GR सर्च और पेमेंट सेक्शन
+    st.subheader("🔍 गाड़ी या GR का हिसाब करें")
+    df_trips = get_all_trips()
 
-# 2. गाड़ी/GR सर्च और पेमेंट सेक्शन
-st.subheader("🔍 गाड़ी या GR का हिसाब करें")
-df_trips = get_all_trips()
-
-if not df_trips.empty:
-    df_last = df_trips.tail(150).iloc[::-1]
-    labels, trip_ids = [], []
-    for _, row in df_last.iterrows():
-        try:
-            gr = str(row.iloc[8]) if str(row.iloc[8]) else "No GR"
-            labels.append(f"GR: {gr} | 🚛 {row.iloc[6]} | 🏢 {row.iloc[2]} | 📅 {row.iloc[0]}")
-            trip_ids.append(str(row.iloc[14]))
-        except: pass
-    
-    selected_label = st.selectbox("गाड़ी या GR नंबर सर्च करें:", ["चुनें..."] + labels)
-    
-    if selected_label != "चुनें...":
-        idx = labels.index(selected_label)
-        selected_trip_id = trip_ids[idx]
-        row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
+    if not df_trips.empty:
+        df_last = df_trips.tail(150).iloc[::-1]
+        labels, trip_ids = [], []
+        for _, row in df_last.iterrows():
+            try:
+                gr = str(row.iloc[8]) if str(row.iloc[8]) else "No GR"
+                labels.append(f"GR: {gr} | 🚛 {row.iloc[6]} | 🏢 {row.iloc[2]} | 📅 {row.iloc[0]}")
+                trip_ids.append(str(row.iloc[14]))
+            except: pass
         
-        gr_no = str(row_data.iloc[8])
-        truck_no = str(row_data.iloc[6])
-        company_name = str(row_data.iloc[2])
+        selected_label = st.selectbox("गाड़ी या GR नंबर सर्च करें:", ["चुनें..."] + labels)
         
-        # 🟢 गाड़ी की डिटेल और GR कॉपी का लिंक
-        st.write("---")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write(f"**🏢 कंपनी:** {company_name}")
-            st.write(f"**🚛 गाड़ी नंबर:** {truck_no}")
-        with c2:
-            if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
-                st.success("✅ GR कॉपी अपलोड है")
-                st.link_button("📄 बिल्टी (GR) देखें", str(row_data.iloc[16]))
-            else:
-                st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है (बुकिंग एडिट से करें)")
-                
-        # 🟢 लाइव बैलेंस मीटर
-        comp_balance = get_company_balance_details(selected_trip_id)
-        if comp_balance <= 0:
-            st.success(f"✅ इस गाड़ी का कंपनी से हिसाब क्लियर है! (बैलेंस: ₹{comp_balance:,})")
-        else:
-            st.warning(f"💰 **इस गाड़ी का बकाया: ₹{comp_balance:,}**")
+        if selected_label != "चुनें...":
+            idx = labels.index(selected_label)
+            selected_trip_id = trip_ids[idx]
+            row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
             
-            with st.form("payment_form"):
-                st.write("👇 **पेमेंट, शॉर्टेज या एक्स्ट्रा KM चढ़ाएं:**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    pay_rec = st.number_input("💵 पेमेंट प्राप्त हुआ (+ ₹)", min_value=0, step=100)
-                    bank = st.selectbox("🏦 बैंक चुनें", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
-                    shortage = st.number_input("📉 शॉर्टेज / कटी (- ₹)", min_value=0, step=50)
-                with col2:
-                    extra = st.number_input("📈 Detention/Extra (+ ₹)", min_value=0, step=100)
-                    remark = st.text_input("📝 विवरण (e.g. UTR No.)")
+            gr_no = str(row_data.iloc[8])
+            truck_no = str(row_data.iloc[6])
+            company_name = str(row_data.iloc[2])
+            
+            # 🟢 गाड़ी की डिटेल और GR कॉपी का लिंक
+            st.write("---")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(f"**🏢 कंपनी:** {company_name}")
+                st.write(f"**🚛 गाड़ी नंबर:** {truck_no}")
+            with c2:
+                if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
+                    st.success("✅ GR कॉपी अपलोड है")
+                    st.link_button("📄 बिल्टी (GR) देखें", str(row_data.iloc[16]))
+                else:
+                    st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है (बुकिंग एडिट से करें)")
+                    
+            # 🟢 लाइव बैलेंस मीटर
+            comp_balance = get_company_balance_details(selected_trip_id)
+            if comp_balance <= 0:
+                st.success(f"✅ इस गाड़ी का कंपनी से हिसाब क्लियर है! (बैलेंस: ₹{comp_balance:,})")
+            else:
+                st.warning(f"💰 **इस गाड़ी का बकाया: ₹{comp_balance:,}**")
                 
-                if st.form_submit_button("✅ हिसाब अपडेट करें", type="primary"):
-                    if pay_rec > 0 and bank == "N/A":
-                        st.error("⚠️ कृपया बैंक चुनें!")
-                    elif pay_rec == 0 and shortage == 0 and extra == 0:
-                        st.error("⚠️ कृपया कोई अमाउंट भरें!")
-                    else:
-                        with st.spinner("अपडेट हो रहा है..."):
-                            t_date = str(datetime.date.today())
-                            if save_company_payment(t_date, selected_trip_id, gr_no, truck_no, pay_rec, bank, shortage, extra, remark):
-                                st.cache_data.clear()
-                                st.success("✅ कंपनी खाता अपडेट हो गया!")
-                                time.sleep(1.5); st.rerun()
-                            else: st.error("❌ एरर! गूगल शीट चेक करें।")
-else: st.info("कोई डेटा नहीं मिला।")
+                with st.form("payment_form"):
+                    st.write("👇 **पेमेंट, शॉर्टेज या एक्स्ट्रा KM चढ़ाएं:**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        pay_rec = st.number_input("💵 पेमेंट प्राप्त हुआ (+ ₹)", min_value=0, step=100)
+                        bank = st.selectbox("🏦 बैंक चुनें", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
+                        shortage = st.number_input("📉 शॉर्टेज / कटी (- ₹)", min_value=0, step=50)
+                    with col2:
+                        extra = st.number_input("📈 Detention/Extra (+ ₹)", min_value=0, step=100)
+                        remark = st.text_input("📝 विवरण (e.g. UTR No.)")
+                    
+                    if st.form_submit_button("✅ हिसाब अपडेट करें", type="primary"):
+                        if pay_rec > 0 and bank == "N/A":
+                            st.error("⚠️ कृपया बैंक चुनें!")
+                        elif pay_rec == 0 and shortage == 0 and extra == 0:
+                            st.error("⚠️ कृपया कोई अमाउंट भरें!")
+                        else:
+                            with st.spinner("अपडेट हो रहा है..."):
+                                t_date = str(datetime.date.today())
+                                if save_company_payment(t_date, selected_trip_id, gr_no, truck_no, pay_rec, bank, shortage, extra, remark):
+                                    st.cache_data.clear()
+                                    st.success("✅ कंपनी खाता अपडेट हो गया!")
+                                    time.sleep(1.5); st.rerun()
+                                else: st.error("❌ एरर! गूगल शीट चेक करें।")
+    else: st.info("कोई डेटा नहीं मिला।")
