@@ -20,20 +20,6 @@ def connect_to_sheet():
     client = gspread.authorize(creds)
     return client.open("Khan_Transport_ERP")
 
-@st.cache_data(ttl=60)
-def get_total_company_outstanding():
-    try:
-        db = connect_to_sheet()
-        comp_data = db.worksheet("Company_Ledger").get_all_values()
-        total_balance = 0
-        if len(comp_data) > 1:
-            for row in comp_data[1:]:
-                if len(row) > 5:
-                    try: total_balance += int(float(str(row[5]).replace(',', '')))
-                    except: pass
-        return total_balance
-    except: return 0
-
 def get_all_trips():
     try:
         db = connect_to_sheet()
@@ -76,22 +62,15 @@ def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_
     except: return False
 
 # ==========================================
-# 🖥️ USER INTERFACE (Function में पैक किया गया है)
+# 🖥️ USER INTERFACE
 # ==========================================
 def show_company_page():
     st.header("🏢 कंपनी खाता और सेटलमेंट")
-    st.write("यहाँ आप देख सकते हैं कि बाज़ार में कुल कितना पैसा फंसा है और किसी भी GR का पेमेंट रिसीव कर सकते हैं।")
-
-    # 1. ऊपर मेन मीटर
-    total_out = get_total_company_outstanding()
-    if total_out > 0:
-        st.error(f"🚨 **बाज़ार (कंपनियों) में कुल फंसा हुआ पैसा: ₹{total_out:,}**")
-    else:
-        st.success(f"✅ **बाज़ार में कोई उधारी नहीं है! (₹0)**")
+    st.write("यहाँ आप किसी भी GR का पेमेंट रिसीव कर सकते हैं और उसका हिसाब चुकता कर सकते हैं।")
 
     st.divider()
 
-    # 2. गाड़ी/GR सर्च और पेमेंट सेक्शन
+    # गाड़ी/GR सर्च और पेमेंट सेक्शन
     st.subheader("🔍 गाड़ी या GR का हिसाब करें")
     df_trips = get_all_trips()
 
@@ -129,7 +108,7 @@ def show_company_page():
                 else:
                     st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है (बुकिंग एडिट से करें)")
                     
-            # 🟢 लाइव बैलेंस मीटर
+            # 🟢 लाइव बैलेंस मीटर (सिर्फ इस गाड़ी के लिए)
             comp_balance = get_company_balance_details(selected_trip_id)
             if comp_balance <= 0:
                 st.success(f"✅ इस गाड़ी का कंपनी से हिसाब क्लियर है! (बैलेंस: ₹{comp_balance:,})")
