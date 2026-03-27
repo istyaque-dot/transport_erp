@@ -12,36 +12,42 @@ def check_password():
     """लॉगिन फॉर्म दिखाता है और पासवर्ड चेक करता है।"""
     def password_entered():
         # 🟢 यहाँ अपना यूजरनेम और पासवर्ड चेक करें
-        if st.session_state["username"] == "admin" and st.session_state["password"] == "khan786":
+        # Check if keys exist before accessing
+        username = st.session_state.get("username", "")
+        password = st.session_state.get("password", "")
+        
+        if username == "admin" and password == "khan786":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # सुरक्षा के लिए पासवर्ड डिलीट करें
-            del st.session_state["username"]
+            # सुरक्षा के लिए पासवर्ड डिलीट करें
+            if "password" in st.session_state:
+                del st.session_state["password"]
+            if "username" in st.session_state:
+                del st.session_state["username"]
         else:
             st.session_state["password_correct"] = False
 
-    if "password_correct" not in st.session_state:
-        # पहली बार लॉगिन फॉर्म दिखाना
-        st.markdown("<h2 style='text-align: center;'>🔐 Khan Transport ERP Login</h2>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            with st.form("login_form"):
-                st.text_input("Username", key="username")
-                st.text_input("Password", type="password", key="password")
-                st.form_submit_button("Login", on_click=password_entered)
-        return False
+    # Check if already logged in
+    if st.session_state.get("password_correct", False):
+        return True
     
-    elif not st.session_state["password_correct"]:
-        # गलत पासवर्ड होने पर दोबारा दिखाना
+    # Show login form
+    st.markdown("<h2 style='text-align: center;'>🔐 Khan Transport ERP Login</h2>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.form("login_form"):
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", key="password")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted:
+                password_entered()
+    
+    # Show error if login failed
+    if st.session_state.get("password_correct") == False:
         st.error("❌ गलत यूजरनेम या पासवर्ड!")
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            with st.form("login_form"):
-                st.text_input("Username", key="username")
-                st.text_input("Password", type="password", key="password")
-                st.form_submit_button("Login", on_click=password_entered)
-        return False
     
-    return True
+    return False
 
 # ==========================================
 # 🖥️ MAIN ERP APP (Only shown if logged in)
