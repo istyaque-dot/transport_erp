@@ -11,7 +11,6 @@ st.set_page_config(page_title="Khan Transport ERP", page_icon="🚛", layout="wi
 def check_password():
     """लॉगिन फॉर्म दिखाता है और पासवर्ड चेक करता है।"""
     def password_entered():
-        # 🟢 यहाँ अपना यूजरनेम और पासवर्ड चेक करें
         # Check if keys exist before accessing
         username = st.session_state.get("username", "")
         password = st.session_state.get("password", "")
@@ -54,7 +53,7 @@ def check_password():
 # ==========================================
 
 if check_password():
-    # 🟢 ध्यान दें: नीचे की सारी लाइनें अब 4 स्पेस आगे हैं
+    # 🟢 नई फाइल का लिंक यहाँ जोड़ दिया गया है
     from booking import show_booking_page
     from advance import show_advance_page
     from receivable import show_receivable_page
@@ -63,6 +62,7 @@ if check_password():
     from transfer import show_transfer_page
     from reports import show_reports_page
     from pod import show_pod_page  
+    from company_hissab import show_company_page  # 🟢 नया पेज
 
     # --- SIDEBAR ---
     st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Khan ERP</h2>", unsafe_allow_html=True)
@@ -83,7 +83,8 @@ if check_password():
         "डे बुक (Credit/Debit)", 
         "ट्रांसफर / पेमेंट (Contra)", 
         "रिपोर्ट्स (Reports)",
-        "POD और फाइनल हिसाब"
+        "POD और फाइनल हिसाब",
+        "🏢 कंपनी खाता"  # 🟢 नया टैब लिस्ट में आ गया
     ])
 
     # --- PAGE NAVIGATION ---
@@ -103,3 +104,5 @@ if check_password():
         show_reports_page()
     elif choice == "POD और फाइनल हिसाब":
         show_pod_page()
+    elif choice == "🏢 कंपनी खाता":
+        show_company_page()  # 🟢 यहाँ से नया पेज खुलेगा
