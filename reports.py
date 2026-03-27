@@ -180,4 +180,4 @@ def show_reports_page():
                 df_today_bal = pd.DataFrame(today_bal, columns=all_bal[0])
                 st.table(df_today_bal[["Truck_No", "GR_No", "Balance_Paid", "Bank_Name"]])
                 st.success(f"कुल बैलेंस पेमेंट किया: ₹{df_today_bal['Balance_Paid'].astype(float).sum():,}")
-            else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।") 
+            else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।")
