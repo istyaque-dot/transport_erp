@@ -62,7 +62,7 @@ if check_password():
     from transfer import show_transfer_page
     from reports import show_reports_page
     from pod import show_pod_page  
-    from company_hissab import show_company_page  # 🟢 नया पेज
+    from company_hisaab import show_company_page  # 🟢 नया पेज
 
     # --- SIDEBAR ---
     st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Khan ERP</h2>", unsafe_allow_html=True)
