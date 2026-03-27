@@ -3,8 +3,17 @@ import datetime
 import time
 import pandas as pd
 import gspread
-import json  # 🟢 नया जोड़ा गया है
+import json
 from oauth2client.service_account import ServiceAccountCredentials
+import requests       # 🟢 नया: Drive पर भेजने के लिए
+import base64         # 🟢 नया: फाइल एन्कोडिंग के लिए
+from PIL import Image # 🟢 नया: फोटो को PDF बनाने के लिए
+import io             # 🟢 नया: फाइल प्रोसेस के लिए
+
+# ==========================================
+# ⚠️ Google Apps Script Web App URL
+# ==========================================
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
@@ -17,13 +26,61 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 FIX: json.loads हटा दिया गया है क्योंकि Streamlit अब सीधा डिक्शनरी देता है
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
+
+# 🟢 नया: Drive पर अपलोड करने वाला इंजन
+def upload_to_drive(file_bytes, file_name):
+    if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
+    elif file_name.lower().endswith(".png"): mime_type = "image/png"
+    else: mime_type = "image/jpeg"
+        
+    b64_data = base64.b64encode(file_bytes).decode('utf-8')
+    payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
+    
+    try:
+        res = requests.post(WEB_APP_URL, data=payload)
+        result = res.text.strip()
+        if "Error" not in result: return result
+        else: return None
+    except: return None
+
+# 🟢 नया: फोटो को जोड़कर PDF बनाने वाला इंजन
+def prepare_pod_file(uploaded_files):
+    if not uploaded_files: return None, None
+    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
+        return uploaded_files[0].read(), "pdf"
+    
+    images = []
+    for file in uploaded_files:
+        if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
+            img = Image.open(file)
+            if img.mode != 'RGB': img = img.convert('RGB')
+            images.append(img)
+    
+    if images:
+        pdf_bytes = io.BytesIO()
+        if len(images) == 1: images[0].save(pdf_bytes, format="PDF")
+        else: images[0].save(pdf_bytes, format="PDF", save_all=True, append_images=images[1:])
+        return pdf_bytes.getvalue(), "pdf"
+    return None, None
+
+# 🟢 नया: GR का लिंक डेटाबेस (कॉलम Q) में सेव करने के लिए
+def save_gr_link_to_db(trip_id, gr_url):
+    try:
+        db = connect_to_sheet()
+        sheet = db.worksheet("Bookings")
+        ids = sheet.col_values(15) # Trip ID Column O (15) mein hai
+        if trip_id in ids:
+            row_index = ids.index(trip_id) + 1
+            sheet.update_cell(row_index, 17, gr_url) # Column Q (17) mein link save hoga
+            return True
+    except: return False
+
 def save_booking_to_db(row_data):
     try:
         db = connect_to_sheet()
@@ -34,8 +91,10 @@ def save_booking_to_db(row_data):
 def get_all_trips():
     try:
         db = connect_to_sheet()
-        data = db.worksheet("Bookings").get_all_records()
-        return pd.DataFrame(data)
+        data = db.worksheet("Bookings").get_all_values()
+        if len(data) > 1:
+            return pd.DataFrame(data[1:], columns=data[0])
+        return pd.DataFrame()
     except: return pd.DataFrame()
 
 def update_booking_in_db(trip_id, updated_row):
@@ -58,7 +117,6 @@ def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_am
         db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
         db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
         
-        # 🟢 Profit entry ab minus (-) yani DEBIT hogi
         if int(uni_amt) > 0:
             db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), gr, "N/A", f"Freight: {truck_no}", -int(uni_amt)], table_range="A1")
         if int(ish_amt) > 0:
@@ -71,10 +129,9 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
         db = connect_to_sheet()
         gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
         
-        # Mapping amounts for update logic
         ledgers = {"Company_Ledger": int(comp_amt), "Owner_Ledger": int(owner_amt)}
-        if int(uni_amt) > 0: ledgers["Universal_Ledger"] = -int(uni_amt) # 🟢 Minus for Debit
-        if int(ish_amt) > 0: ledgers["Ishtyaque_Ledger"] = -int(ish_amt) # 🟢 Minus for Debit
+        if int(uni_amt) > 0: ledgers["Universal_Ledger"] = -int(uni_amt) 
+        if int(ish_amt) > 0: ledgers["Ishtyaque_Ledger"] = -int(ish_amt) 
         
         for sheet_name, amt in ledgers.items():
             ws = db.worksheet(sheet_name)
@@ -219,7 +276,6 @@ def show_booking_page():
                 
                 with st.form("edit_booking_form"):
                     
-                    # 🟢 सुरक्षा कवच (Empty Cell Fix)
                     def s_int(val):
                         try: return int(float(val))
                         except: return 0
@@ -258,4 +314,46 @@ def show_booking_page():
                                 time.sleep(1.5)
                                 st.rerun()
                             else: st.error("❌ अपडेट फेल हो गया।")
+
+                # ==========================================
+                # 🟢 NAYA: GR (BILTY) UPLOAD SECTION
+                # ==========================================
+                st.divider()
+                st.subheader("📄 GR (बिल्टी) कॉपी अपलोड")
+                
+                # चेक करें कि क्या पहले से GR सेव है (Column Q/16th index में)
+                existing_gr_url = ""
+                if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
+                    existing_gr_url = str(row_data.iloc[16])
+                    st.success("✅ इस गाड़ी की GR कॉपी सिस्टम में पहले से सुरक्षित है।")
+                    st.link_button("📥 सेव की गई GR कॉपी देखें / डाउनलोड करें", existing_gr_url, type="secondary")
+                
+                st.write("GR के पन्नों की फोटो चुनें (सिस्टम खुद PDF बना लेगा):")
+                gr_files = st.file_uploader("GR के पेज चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key=f"gr_up_{selected_trip_id}")
+                
+                if st.button("🚀 GR अपलोड करें", type="primary"):
+                    if gr_files:
+                        with st.spinner("GR की PDF बन रही है और Drive पर सेव हो रही है..."):
+                            final_bytes, file_ext = prepare_pod_file(gr_files)
+                            
+                            if final_bytes:
+                                f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}" # GR_Number_TruckNumber
+                                d_id = upload_to_drive(final_bytes, f_name)
+                                
+                                if d_id:
+                                    gr_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                    if save_gr_link_to_db(selected_trip_id, gr_url):
+                                        st.cache_data.clear()
+                                        st.success("✅ GR की PDF बनकर सुरक्षित सेव हो गई!")
+                                        time.sleep(2)
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Google Sheet में लिंक सेव नहीं हो पाया!")
+                                else:
+                                    st.error("❌ Google Drive पर अपलोड फेल हो गया!")
+                            else:
+                                st.error("❌ फोटो को प्रोसेस करने में कोई दिक्कत आई।")
+                    else:
+                        st.error("⚠️ कृपया पहले GR की फोटो चुनें!")
+
         else: st.info("कोई पुरानी बुकिंग नहीं मिली।")
