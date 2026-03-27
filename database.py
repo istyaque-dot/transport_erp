@@ -1,196 +1,267 @@
+import json
 import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-from database import get_dashboard_stats, get_all_trips, get_ledger_stats
+import datetime
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+import io
 
-def show_dashboard_page():
-    st.markdown("""
-        <style>
-            /* Compact spacing */
-            .stMetric { padding: 0.5rem 0; }
-            .element-container { margin-bottom: 0.5rem; }
+# --- 0. CONNECTION ---
+@st.cache_resource(ttl=86400)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
+    client = gspread.authorize(creds)
+    sheet = client.open("Khan_Transport_ERP")
+    return sheet
+
+# --- 1. GOOGLE DRIVE UPLOAD ---
+def upload_to_drive(file_bytes, file_name, folder_id):
+    try:
+        scope = ["https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        service = build('drive', 'v3', credentials=creds)
+        meta = {'name': file_name, 'parents': [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='application/octet-stream', resumable=True)
+        file = service.files().create(body=meta, media_body=media, fields='id').execute()
+        return file.get('id')
+    except Exception as e:
+        st.error(f"Cloud Upload Error: {e}")
+        return None
+
+# --- 2. BOOKING LOGIC ---
+def save_booking_to_db(row_data):
+    try:
+        db = connect_to_sheet()
+        db.worksheet("Bookings").append_row(row_data, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+@st.cache_data(ttl=60)
+def get_all_trips():
+    try:
+        db = connect_to_sheet()
+        data = db.worksheet("Bookings").get_all_records()
+        return pd.DataFrame(data)
+    except: return pd.DataFrame()
+
+def update_booking_in_db(trip_id, updated_row):
+    try:
+        db = connect_to_sheet()
+        sheet = db.worksheet("Bookings")
+        ids = sheet.col_values(15) 
+        if trip_id in ids:
+            row_index = ids.index(trip_id) + 1
+            sheet.update(f"A{row_index}:O{row_index}", [updated_row])
+            st.cache_data.clear()
+            return True
+    except: return False
+
+def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet()
+        gr = str(gr_no) if gr_no else "N/A"
+        base = [str(date_val), str(trip_id), gr, str(truck_no), str(dest)]
+        db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
+        db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
+        db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
+        db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet()
+        gr = str(gr_no).strip() if str(gr_no).strip() != "" else "N/A"
+        ledgers = {"Company_Ledger": int(comp_amt), "Owner_Ledger": int(owner_amt), "Universal_Ledger": int(uni_amt), "Ishtyaque_Ledger": int(ish_amt)}
+        for sheet_name, amt in ledgers.items():
+            ws = db.worksheet(sheet_name)
+            records = ws.get_all_values()
+            row_to_update = -1
+            for i, row in enumerate(records):
+                if len(row) > 1 and trip_id in row:
+                    row_to_update = i + 1; break
             
-            /* Custom metric styling */
-            [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 600; }
-            [data-testid="stMetricLabel"] { font-size: 0.9rem; color: #888; }
+            new_row_data = [str(date_val), str(trip_id), gr, str(truck_no), str(dest), amt]
+            if sheet_name in ["Universal_Ledger", "Ishtyaque_Ledger"]:
+                desc = f"Freight: {truck_no}" if sheet_name == "Universal_Ledger" else f"Profit: {truck_no}"
+                new_row_data = [str(date_val), str(trip_id), "N/A", "N/A", desc, amt]
             
-            /* Clean table */
-            .dataframe { font-size: 0.9rem; }
-            
-            /* Section headers */
-            .section-header { 
-                background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
-                color: white;
-                padding: 0.75rem 1rem;
-                border-radius: 0.5rem;
-                margin: 1rem 0 0.5rem 0;
-                font-size: 1.1rem;
-                font-weight: 600;
-            }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    st.title("📊 Khan Transport - Dashboard")
-    
-    # --- BUSINESS OVERVIEW ---
-    st.markdown('<div class="section-header">💼 बिज़नेस का हाल (Business Overview)</div>', unsafe_allow_html=True)
-    
-    stats = get_dashboard_stats()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="कुल गाड़ियाँ (Total Trips)",
-            value=stats.get("total_trips", 0),
-            delta=None
-        )
-    
-    with col2:
-        freight = stats.get('total_freight', 0)
-        st.metric(
-            label="कुल कंपनी भाड़ा (Total Freight)",
-            value=f"₹{freight:,}",
-            delta=None
-        )
-    
-    with col3:
-        advance = stats.get('total_advance', 0)
-        st.metric(
-            label="कुल एडवांस दिया (Total Advance)",
-            value=f"₹{advance:,}",
-            delta=None
-        )
-    
-    with col4:
-        cleared = stats.get('total_cleared', 0)
-        st.metric(
-            label="कुल पेमेंट आया (Total Received)",
-            value=f"₹{cleared:,}",
-            delta=None
-        )
-    
-    # --- ACCOUNT BALANCES ---
-    st.markdown('<div class="section-header">🏦 खातों का बैलेंस (Account Balances)</div>', unsafe_allow_html=True)
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    cash = get_ledger_stats("Cash_Ledger")
-    c311 = get_ledger_stats("Canara_311_Ledger")
-    c41 = get_ledger_stats("Canara_41_Ledger")
-    bob = get_ledger_stats("BOB_Ledger")
-    pump = get_ledger_stats("Shekh_Filling_Ledger")
-    
-    with col1:
-        cash_bal = cash.get("balance", 0)
-        st.metric("💵 Cash", f"₹{cash_bal:,}")
-    
-    with col2:
-        c311_bal = c311.get("balance", 0)
-        st.metric("🏦 Canara 311", f"₹{c311_bal:,}")
-    
-    with col3:
-        c41_bal = c41.get("balance", 0)
-        st.metric("🏦 Canara 41", f"₹{c41_bal:,}")
-    
-    with col4:
-        bob_bal = bob.get("balance", 0)
-        st.metric("🏦 BOB", f"₹{bob_bal:,}")
-    
-    with col5:
-        pump_bal = pump.get("balance", 0)
-        if pump_bal < 0:
-            st.metric("⛽ Pump", f"₹{abs(pump_bal):,}", "देना बाकी", delta_color="inverse")
-        else:
-            st.metric("⛽ Pump", f"₹{pump_bal:,}", "क्लियर", delta_color="normal")
-    
-    # Total Cash Available
-    total_available = cash_bal + c311_bal + c41_bal + bob_bal
-    st.info(f"💰 **कुल उपलब्ध पैसा (Total Available Cash):** ₹{total_available:,}")
-    
-    # --- PENDING PAYMENTS SUMMARY ---
-    st.markdown('<div class="section-header">⏳ पेंडिंग पेमेंट्स (Pending Payments)</div>', unsafe_allow_html=True)
-    
-    df = get_all_trips()
-    if not df.empty:
-        # Company से आना बाकी
-        company_pending = freight - cleared
+            if row_to_update != -1: ws.update(f"A{row_to_update}:F{row_to_update}", [new_row_data])
+            else: ws.append_row(new_row_data, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+# --- 3. ADVANCE LOGIC ---
+def save_advance_to_db(row_data):
+    try:
+        db = connect_to_sheet()
+        db.worksheet("Advances").append_row(row_data, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+@st.cache_data(ttl=60)
+def get_total_advance_for_trip(trip_id):
+    try:
+        db = connect_to_sheet()
+        records = db.worksheet("Advances").get_all_values()
+        return sum([int(float(row[8])) for row in records[1:] if len(row) > 8 and row[1] == trip_id])
+    except: return 0
+
+def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, bank_name, diesel_amt, pump_name):
+    try:
+        db = connect_to_sheet()
+        gr = str(gr_no) if gr_no else "N/A"
+        base = [str(date_val), str(trip_id), gr, str(dest)]
+        if int(cash_amt) > 0: db.worksheet("Cash_Ledger").append_row(base + [-int(cash_amt)], table_range="A1")
+        if int(bank_amt) > 0:
+            s_name = {"canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(bank_name)
+            if s_name: db.worksheet(s_name).append_row(base + [-int(bank_amt)], table_range="A1")
+        if int(diesel_amt) > 0: db.worksheet("Shekh_Filling_Ledger").append_row(base + [int(diesel_amt)], table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+# --- 4. RECEIVABLES & TRANSFERS ---
+def save_receivable_to_db(row_data):
+    try:
+        db = connect_to_sheet(); db.worksheet("Receivables").append_row(row_data, table_range="A1")
+        st.cache_data.clear(); return True
+    except: return False
+
+@st.cache_data(ttl=60)
+def get_total_received_for_trip(trip_id):
+    try:
+        db = connect_to_sheet()
+        records = db.worksheet("Receivables").get_all_values()
+        return sum([int(float(row[4])) for row in records[1:] if len(row) > 4 and row[1] == trip_id])
+    except: return 0
+
+def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, received_amt, bank_name):
+    try:
+        db = connect_to_sheet()
+        desc = f"{comp_name} | {truck_no}"
+        base = [str(date_val), str(trip_id), str(gr_no), desc]
+        s_name = {"Cash":"Cash_Ledger", "canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(bank_name)
+        if s_name: db.worksheet(s_name).append_row(base + [int(received_amt)], table_range="A1")
+        st.cache_data.clear(); return True
+    except: return False
+
+def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
+    try:
+        db = connect_to_sheet()
+        amt = int(amount)
+        s_map = {"Cash":"Cash_Ledger", "canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger", "Shekh Filling (Pump)":"Shekh_Filling_Ledger", "Ishtyaque Ledger":"Ishtyaque_Ledger", "Universal Ledger":"Universal_Ledger"}
+        f_s = s_map.get(from_acc); t_s = s_map.get(to_acc)
+        if f_s: db.worksheet(f_s).append_row([str(date_val), "Transfer", "Debit", f"To: {to_acc} | {remarks}", -amt], table_range="A1")
+        if t_s:
+            if to_acc in ["Ishtyaque Ledger", "Universal Ledger"]:
+                db.worksheet(t_s).append_row([str(date_val), "Transfer", "N/A", "N/A", f"From: {from_acc}", amt], table_range="A1")
+            else:
+                db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc}", amt], table_range="A1")
+        st.cache_data.clear(); return True
+    except: return False
+
+# --- 5. DAY BOOK LOGIC ---
+def save_daybook_to_db(row_data):
+    try:
+        db = connect_to_sheet()
+        db.worksheet("Day_Book").append_row(row_data, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, remarks):
+    try:
+        db = connect_to_sheet()
+        final_amount = int(amount) if entry_type == "Credit (पैसा आया / जमा)" else -int(amount)
+        base_data = [str(date_val), "Manual Entry", str(entry_type), f"{category} - {remarks}" if remarks else category]
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric(
-                "🏢 कंपनी से आना बाकी (Receivable)",
-                f"₹{company_pending:,}",
-                help="Total freight minus total received"
-            )
-        with col2:
-            # Calculate actual pending balance from trips
-            pending_count = 0
-            for idx, row in df.iterrows():
-                try:
-                    comp_freight = int(row.iloc[11])
-                    # You can add more logic here to check received amounts
-                    if comp_freight > 0:
-                        pending_count += 1
-                except:
-                    pass
-            
-            st.metric(
-                "🚛 पेंडिंग ट्रिप्स (Pending Settlements)",
-                f"{pending_count} गाड़ियाँ",
-                help="Trips with pending settlements"
-            )
-    
-    # --- RECENT BOOKINGS ---
-    st.markdown('<div class="section-header">📋 हाल की बुकिंग (Recent Bookings - Last 15)</div>', unsafe_allow_html=True)
-    
-    if not df.empty:
-        df_display = df.tail(15).iloc[::-1].copy()
+        s_name = {"Cash":"Cash_Ledger", "canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(account_name)
+        if s_name:
+            db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
         
-        try:
-            # Select important columns only
-            display_data = []
-            for idx, row in df_display.iterrows():
-                display_data.append({
-                    "तारीख": row.iloc[0],
-                    "गाड़ी": row.iloc[6],
-                    "कहाँ तक": row.iloc[7],
-                    "GR नंबर": row.iloc[8] if row.iloc[8] else "-",
-                    "कंपनी": row.iloc[2],
-                    "भाड़ा": f"₹{int(row.iloc[11]):,}",
-                    "Trip ID": row.iloc[14]
-                })
-            
-            df_clean = pd.DataFrame(display_data)
-            
-            # Display as table with alternating colors
-            st.dataframe(
-                df_clean,
-                use_container_width=True,
-                hide_index=True,
-                height=400
-            )
-            
-        except Exception as e:
-            st.error(f"Table display error: {str(e)}")
-            st.dataframe(df_display, use_container_width=True)
-    else:
-        st.info("अभी कोई गाड़ी लोड नहीं हुई है।")
-    
-    # --- QUICK NAVIGATION INFO ---
-    st.markdown('<div class="section-header">⚡ त्वरित नेविगेशन (Quick Navigation)</div>', unsafe_allow_html=True)
-    
-    st.info("""
-    **📍 सभी pages को sidebar से access करें:**
-    
-    - 🚛 **बुकिंग** - नई गाड़ी लगाएँ या एडिट करें
-    - 💸 **एडवांस** - गाड़ी वाले को एडवांस दें
-    - 📥 **रिसिवेबल** - कंपनी से पेमेंट लें
-    - 🔀 **ट्रांसफर** - खातों के बीच पैसा transfer करें
-    - 📓 **डे बुक** - अन्य जमा/खर्च की entry
-    - 🏁 **POD और फाइनल हिसाब** - बिल्टी upload और settlement
-    - 📑 **रिपोर्ट्स** - सभी ledgers और statements
-    """)
-    
-    # --- FOOTER INFO ---
-    st.markdown("---")
-    st.caption("💡 **Tip:** Dashboard हर minute auto-refresh होता है। सभी data real-time है।")
+        st.cache_data.clear()
+        return True
+    except: return False
+
+# --- 6. REPORTS, DASHBOARD & POD ---
+@st.cache_data(ttl=60)
+def get_sheet_data_for_reports(sheet_name):
+    try:
+        db = connect_to_sheet(); data = db.worksheet(sheet_name).get_all_values()
+        return pd.DataFrame(data[1:], columns=data[0]) if len(data) > 1 else pd.DataFrame()
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def get_ledger_stats(sheet_name):
+    """Get balance for a specific ledger"""
+    df = get_sheet_data_for_reports(sheet_name)
+    if not df.empty:
+        df.iloc[:, -1] = pd.to_numeric(df.iloc[:, -1], errors='coerce').fillna(0)
+        return {"balance": int(df.iloc[:, -1].sum())}
+    return {"balance": 0}
+
+@st.cache_data(ttl=60)
+def get_dashboard_stats():
+    stats = {"total_freight": 0, "total_trips": 0, "total_advance": 0, "total_cleared": 0}
+    try:
+        db = connect_to_sheet()
+        if db:
+            try:
+                b_data = db.worksheet("Bookings").get_all_values()
+                stats["total_trips"] = len(b_data) - 1 if len(b_data) > 1 else 0
+                for row in b_data[1:]:
+                    try: stats["total_freight"] += int(row[11]) 
+                    except: pass
+            except: pass
+            try:
+                a_data = db.worksheet("Advances").get_all_values()
+                for row in a_data[1:]:
+                    try: stats["total_advance"] += abs(int(row[8])) 
+                    except: pass
+            except: pass
+            try:
+                r_data = db.worksheet("Receivables").get_all_values()
+                for row in r_data[1:]:
+                    try: stats["total_cleared"] += (int(row[4]) + int(row[6])) 
+                    except: pass
+            except: pass
+        return stats
+    except: return stats
+
+@st.cache_data(ttl=60)
+def get_company_shortage(trip_id):
+    df = get_sheet_data_for_reports("Company_PODs")
+    if not df.empty:
+        row = df[df.iloc[:, 1] == trip_id]
+        if not row.empty: return int(row.iloc[0, 5])
+    return 0
+
+def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage):
+    try:
+        db = connect_to_sheet(); db.worksheet("Company_PODs").append_row([str(date_val), str(trip_id), str(gr_no), str(truck_no), "Submitted", int(shortage)], table_range="A1")
+        st.cache_data.clear(); return True
+    except: return False
+
+def save_owner_adjustment(date_val, trip_id, gr_no, amount, remarks):
+    try:
+        db = connect_to_sheet()
+        base_data = [str(date_val), str(trip_id), str(gr_no), "Adjustment / Penalty", remarks]
+        db.worksheet("Owner_Ledger").append_row(base_data + [int(amount)], table_range="A1")
+        st.cache_data.clear()
+        return True
+    except: return False
