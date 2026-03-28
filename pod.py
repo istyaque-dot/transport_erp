@@ -31,42 +31,32 @@ def connect_to_sheet():
     return client.open("Khan_Transport_ERP")
 
 def upload_to_drive(file_bytes, file_name):
-    if file_name.lower().endswith(".pdf"):
-        mime_type = "application/pdf"
-    elif file_name.lower().endswith(".png"):
-        mime_type = "image/png"
-    else:
-        mime_type = "image/jpeg"
+    if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
+    elif file_name.lower().endswith(".png"): mime_type = "image/png"
+    else: mime_type = "image/jpeg"
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
         res = requests.post(WEB_APP_URL, data=payload)
         result = res.text.strip()
-        if "Error" not in result:
-            return result
-        else:
-            return None
-    except:
-        return None
+        if "Error" not in result: return result
+        else: return None
+    except: return None
 
 def prepare_pod_file(uploaded_files):
-    if not uploaded_files:
-        return None, None
+    if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
         return uploaded_files[0].read(), "pdf"
     images = []
     for file in uploaded_files:
         if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
             img = Image.open(file)
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
+            if img.mode != 'RGB': img = img.convert('RGB')
             images.append(img)
     if images:
         pdf_bytes = io.BytesIO()
-        if len(images) == 1:
-            images[0].save(pdf_bytes, format="PDF")
-        else:
-            images[0].save(pdf_bytes, format="PDF", save_all=True, append_images=images[1:])
+        if len(images) == 1: images[0].save(pdf_bytes, format="PDF")
+        else: images[0].save(pdf_bytes, format="PDF", save_all=True, append_images=images[1:])
         return pdf_bytes.getvalue(), "pdf"
     return None, None
 
@@ -75,8 +65,7 @@ def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage_amt):
         db = connect_to_sheet()
         db.worksheet("Company_PODs").append_row([str(date_val), trip_id, gr_no, truck_no, "Submitted", int(shortage_amt)])
         return True
-    except:
-        return False
+    except: return False
 
 def get_trip_summary(trip_id):
     try:
@@ -93,15 +82,12 @@ def get_trip_summary(trip_id):
             for _, r in adj_rows.iterrows():
                 desc = str(r.iloc[4])
                 if "Shortage" in desc or "Extra" in desc or "Detention" in desc:
-                    try:
-                        already_adj += int(float(str(r.iloc[5]).replace(',', '')))
-                    except:
-                        pass
+                    try: already_adj += int(float(str(r.iloc[5]).replace(',', '')))
+                    except: pass
                 elif "POD Link:" in desc:
                     existing_pod_url = desc.replace("POD Link:", "").strip()
         return trip_bk, total_adv, already_adj, existing_pod_url
-    except:
-        return None, 0, 0, None
+    except: return None, 0, 0, None
 
 def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank_name, remark):
     try:
@@ -114,40 +100,45 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
         b_amt = amount if bank_name != "Cash" else 0
         db.worksheet("Advances").append_row([str(date_val), trip_id, truck_no, 0, f"Final Settlement ({remark})", c_amt, b_amt, bank_name, int(amount)])
         return True
-    except:
-        return False
+    except: return False
 
 # ==========================================
-# 🖥️ USER INTERFACE
+# 🖥️ USER INTERFACE (यह वह फंक्शन है जो मिसिंग था)
 # ==========================================
 def show_pod_page():
     st.header("🏁 POD और फाइनल हिसाब (Settlement)")
     db = connect_to_sheet()
     df_owner_raw = db.worksheet("Owner_Ledger").get_all_values()
     df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
+    
     if not df_owner.empty:
         df_clean = df_owner[~df_owner.iloc[:, 4].str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].tail(50).iloc[::-1]
         choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_clean.iterrows()]
+        
         selected = st.selectbox("🔍 गाड़ी चुनें जिसका हिसाब फाइनल करना है या POD अपलोड करनी है", ["चुनें..."] + choices)
+        
         if selected != "चुनें...":
             parts = selected.split(" | ")
             gr_no = parts[0].replace("GR: ", "")
             truck_no = parts[1].replace("🚛 ", "")
             trip_id = parts[3].replace("ID: ", "")
+            
             trip_bk, total_adv, already_adj, existing_pod_url = get_trip_summary(trip_id)
+            
             if trip_bk:
                 weight = float(trip_bk['weight'])
                 owner_freight = int(trip_bk['truck freight'])
+                
                 st.subheader("📊 लाइव पासबुक")
                 c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.metric("कुल भाड़ा", f"₹{owner_freight:,}")
-                with c2:
-                    st.metric("एडवांस दे चुके", f"₹{total_adv:,}")
+                with c1: st.metric("कुल भाड़ा", f"₹{owner_freight:,}")
+                with c2: st.metric("एडवांस दे चुके", f"₹{total_adv:,}")
                 with c3:
                     default_munshi = int(weight * 1)
                     munshiyana = st.number_input("✍️ मुंशीयाना (Edit करें)", min_value=0, value=default_munshi, step=50)
+                
                 current_bal = (owner_freight - munshiyana - total_adv) + already_adj
+                
                 if existing_pod_url:
                     st.success("📄 इस गाड़ी की बिल्टी (POD) सिस्टम में सेव है।")
                     st.link_button("📥 सेव की गई बिल्टी (POD) यहाँ से देखें / डाउनलोड करें", existing_pod_url, type="secondary")
@@ -171,16 +162,13 @@ def show_pod_page():
                                         db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                         st.cache_data.clear()
                                         st.success("✅ सारी फोटो जुड़कर एक PDF बन गई और सुरक्षित सेव हो गई!")
-                                        time.sleep(2)
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ अपलोड फेल हो गया!")
-                                else:
-                                    st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
-                        else:
-                            st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+                                        time.sleep(2); st.rerun()
+                                    else: st.error("❌ अपलोड फेल हो गया!")
+                                else: st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
+                        else: st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
                 else:
                     st.warning(f"💰 **अभी का बाकी बैलेंस: ₹{current_bal:,}**")
+                    
                     # --- PART 1: सिर्फ POD अपलोड ---
                     st.subheader("📄 1. बिल्टी (POD) अपलोड करें")
                     st.write("अगर आपको सिर्फ बिल्टी सेव करनी है (पेमेंट बाद में करेंगे), तो यहाँ से करें:")
@@ -197,14 +185,10 @@ def show_pod_page():
                                         db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                         st.cache_data.clear()
                                         st.success("✅ बिल्टी (POD) सुरक्षित सेव हो गई!")
-                                        time.sleep(2)
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ अपलोड फेल हो गया!")
-                                else:
-                                    st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
-                        else:
-                            st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+                                        time.sleep(2); st.rerun()
+                                    else: st.error("❌ अपलोड फेल हो गया!")
+                                else: st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
+                        else: st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
                     
                     st.divider()
                     
@@ -236,7 +220,5 @@ def show_pod_page():
                                         save_balance_to_ledgers(db, t_date, trip_id, gr_no, truck_no, final_payable, pay_mode, adj_remark)
                                     st.cache_data.clear()
                                     st.success(f"🎊 हिसाब बराबर! ₹{final_payable:,} का सेटलमेंट हो गया।")
-                                    time.sleep(2)
-                                    st.rerun()
-        else:
-            st.info("कोई डेटा नहीं मिला।")
+                                    time.sleep(2); st.rerun()
+    else: st.info("कोई डेटा नहीं मिला।")
