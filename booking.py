@@ -5,10 +5,10 @@ import pandas as pd
 import gspread
 import json
 from oauth2client.service_account import ServiceAccountCredentials
-import requests       # 🟢 नया: Drive पर भेजने के लिए
-import base64         # 🟢 नया: फाइल एन्कोडिंग के लिए
-from PIL import Image # 🟢 नया: फोटो को PDF बनाने के लिए
-import io             # 🟢 नया: फाइल प्रोसेस के लिए
+import requests       
+import base64         
+from PIL import Image 
+import io             
 
 # ==========================================
 # ⚠️ Google Apps Script Web App URL
@@ -33,7 +33,6 @@ def connect_to_sheet():
     sheet = client.open("Khan_Transport_ERP")
     return sheet
 
-# 🟢 नया: Drive पर अपलोड करने वाला इंजन
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
     elif file_name.lower().endswith(".png"): mime_type = "image/png"
@@ -49,7 +48,6 @@ def upload_to_drive(file_bytes, file_name):
         else: return None
     except: return None
 
-# 🟢 नया: फोटो को जोड़कर PDF बनाने वाला इंजन
 def prepare_pod_file(uploaded_files):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
@@ -69,15 +67,14 @@ def prepare_pod_file(uploaded_files):
         return pdf_bytes.getvalue(), "pdf"
     return None, None
 
-# 🟢 नया: GR का लिंक डेटाबेस (कॉलम Q) में सेव करने के लिए
 def save_gr_link_to_db(trip_id, gr_url):
     try:
         db = connect_to_sheet()
         sheet = db.worksheet("Bookings")
-        ids = sheet.col_values(15) # Trip ID Column O (15) mein hai
+        ids = sheet.col_values(15) 
         if trip_id in ids:
             row_index = ids.index(trip_id) + 1
-            sheet.update_cell(row_index, 17, gr_url) # Column Q (17) mein link save hoga
+            sheet.update_cell(row_index, 17, gr_url) 
             return True
     except: return False
 
@@ -104,7 +101,8 @@ def update_booking_in_db(trip_id, updated_row):
         ids = sheet.col_values(15) 
         if trip_id in ids:
             row_index = ids.index(trip_id) + 1
-            sheet.update(f"A{row_index}:P{row_index}", [updated_row])
+            # 🟢 FIX: Google Sheet update logic made more robust
+            sheet.update(values=[updated_row], range_name=f"A{row_index}:P{row_index}")
             return True
     except: return False
 
@@ -147,7 +145,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
                 new_row_data = [str(date_val), str(trip_id), gr, "N/A", desc, amt]
             
             if row_to_update != -1: 
-                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row_data])
+                ws.update(values=[new_row_data], range_name=f"A{row_to_update}:F{row_to_update}")
             else: 
                 ws.append_row(new_row_data, table_range="A1")
         return True
@@ -264,7 +262,9 @@ def show_booking_page():
             trip_ids = []
             for _, row in df_last.iterrows():
                 try:
-                    labels.append(f"📅 {row.iloc[0]} | 🚛 {row.iloc[6]} | 📍 {row.iloc[7]} | 🆔 {row.iloc[14]}")
+                    gr_disp = str(row.iloc[8]) if pd.notna(row.iloc[8]) and str(row.iloc[8]).lower() != "nan" else "N/A"
+                    # 🟢 NAYA FORMAT (कंपनी हटा दी गई है, GR नंबर जोड़ा गया है)
+                    labels.append(f"🚛 {row.iloc[6]} | 📅 {row.iloc[0]} | 📍 {row.iloc[7]} | GR: {gr_disp}")
                     trip_ids.append(str(row.iloc[14]))
                 except: pass
             
@@ -280,20 +280,27 @@ def show_booking_page():
                         try: return int(float(val))
                         except: return 0
 
+                    def s_str(val):
+                        return str(val) if pd.notna(val) and str(val).lower() != "nan" else ""
+
+                    # 🟢 GR Number Cleanup (अगर N/A है तो खाली दिखेगा)
+                    current_gr = s_str(row_data.iloc[8])
+                    if current_gr == "N/A": current_gr = ""
+
                     c1, c2 = st.columns(2)
                     with c1:
-                        e_date = st.text_input("तारीख", str(row_data.iloc[0]))
-                        e_from = st.text_input("कहाँ से", str(row_data.iloc[1]))
+                        e_date = st.text_input("तारीख", s_str(row_data.iloc[0]))
+                        e_from = st.text_input("कहाँ से", s_str(row_data.iloc[1]))
                         e_company = st.selectbox("कंपनी", ["Universal Industries", "Other"], index=0 if str(row_data.iloc[2]) == "Universal Industries" else 1)
                         e_weight = st.number_input("माल का वज़न", value=s_int(row_data.iloc[5]), step=1)
                         e_comp_rate = st.number_input("कंपनी रेट", value=s_int(row_data.iloc[4]), step=1) 
                         e_uni_amt = st.number_input("Universal (₹)", value=s_int(row_data.iloc[9]), step=10)
                     with c2:
-                        e_truck = st.text_input("गाड़ी नंबर", str(row_data.iloc[6]))
-                        e_to = st.text_input("कहाँ तक", str(row_data.iloc[7]))
-                        e_gr = st.text_input("GR Number", str(row_data.iloc[8]))
+                        e_truck = st.text_input("गाड़ी नंबर", s_str(row_data.iloc[6]))
+                        e_to = st.text_input("कहाँ तक", s_str(row_data.iloc[7]))
+                        e_gr = st.text_input("GR Number", current_gr, placeholder="GR नंबर यहाँ लिखें")
                         e_owner_rate = st.number_input("गाड़ी वाला रेट", value=s_int(row_data.iloc[3]), step=1) 
-                        e_comments = st.text_input("टिप्पणी", str(row_data.iloc[10]))
+                        e_comments = st.text_input("टिप्पणी", s_str(row_data.iloc[10]))
                         e_ish_amt = st.number_input("Ishtyaque Profit (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
                         
                     e_comp_freight = int(e_weight * e_comp_rate) + e_uni_amt
@@ -303,25 +310,28 @@ def show_booking_page():
                     if st.form_submit_button("💾 अपडेट करें"):
                         with st.spinner("अपडेट हो रहा है..."):
                             e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
+                            
+                            # 🟢 नया: अगर खाली है तो वापस N/A सेव कर दो
+                            final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
+                            
                             updated_row = [
                                 str(e_date), str(e_from), str(e_company), e_owner_rate, e_comp_rate, e_weight,
-                                str(e_truck), str(e_to), str(e_gr), e_uni_amt, str(e_comments),
+                                str(e_truck), str(e_to), final_gr, e_uni_amt, str(e_comments),
                                 e_comp_freight, e_owner_freight, e_final_uni, selected_trip_id, e_ish_amt
                             ]
                             if update_booking_in_db(selected_trip_id, updated_row):
-                                update_ledgers(e_date, selected_trip_id, e_gr, e_truck, e_to, e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt)
-                                st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
+                                update_ledgers(e_date, selected_trip_id, final_gr, e_truck, e_to, e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt)
+                                st.success("✅ बुकिंग और GR नंबर सफलतापूर्वक अपडेट हो गए!")
                                 time.sleep(1.5)
                                 st.rerun()
                             else: st.error("❌ अपडेट फेल हो गया।")
 
                 # ==========================================
-                # 🟢 NAYA: GR (BILTY) UPLOAD SECTION
+                # 🟢 GR (BILTY) UPLOAD SECTION
                 # ==========================================
                 st.divider()
                 st.subheader("📄 GR (बिल्टी) कॉपी अपलोड")
                 
-                # चेक करें कि क्या पहले से GR सेव है (Column Q/16th index में)
                 existing_gr_url = ""
                 if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
                     existing_gr_url = str(row_data.iloc[16])
