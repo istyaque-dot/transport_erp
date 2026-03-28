@@ -65,7 +65,7 @@ if check_password():
     from company_hisaab import show_company_page  # 🟢 नया पेज
 
     # --- SIDEBAR ---
-    st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Khan ERP</h2>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h2 style='text-align: center;'>🚛 transport ERP</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<p style='text-align: center; color: gray;'>Today: {datetime.date.today()}</p>", unsafe_allow_html=True)
     
     # लॉगआउट बटन
