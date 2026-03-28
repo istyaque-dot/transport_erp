@@ -16,7 +16,6 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 FIX: json.loads हटा दिया गया है क्योंकि Streamlit अब सीधा डिक्शनरी देता है
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
@@ -39,13 +38,12 @@ def get_sheet_data_for_reports(sheet_name):
 def show_reports_page():
     st.header("📑 बिज़नेस रिपोर्ट्स (Khan ERP)")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["🏦 खाता स्टेटमेंट", "Master Report", "🚚 सिंगल गाड़ी हिसाब", "📅 आज का काम"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏦 खाता स्टेटमेंट", "Master Report", "🚚 सिंगल गाड़ी हिसाब", "📅 आज का काम", "📄 डॉक्यूमेंट प्रिंट"])
 
     # --- TAB 1: Ledger Report ---
     with tab1:
         st.markdown("### 📊 लेजर स्टेटमेंट")
         col1, col2, col3 = st.columns(3)
-        # 🟢 बदलाव: यहाँ ड्रॉपडाउन में 'canara_1747' जोड़ दिया गया है
         with col1: account_type = st.selectbox("खाता चुनें:", ["Cash_Ledger", "Canara_311_Ledger", "Canara_41_Ledger", "BOB_Ledger", "Shekh_Filling_Ledger", "Company_Ledger", "Owner_Ledger", "Ishtyaque_Ledger", "Universal_Ledger", "canara_1747"])
         with col2: start_date = st.date_input("कब से?", datetime.date.today().replace(day=1), key="rep_start")
         with col3: end_date = st.date_input("कब तक?", datetime.date.today(), key="rep_end")
@@ -75,7 +73,7 @@ def show_reports_page():
             raw_bk = get_sheet_data_for_reports("Bookings")
             if raw_bk: st.dataframe(pd.DataFrame(raw_bk[1:], columns=raw_bk[0]), use_container_width=True)
 
-    # --- TAB 3: 🟢 SINGLE TRIP PASSBOOK (WITH MUNSHIYANA & WHATSAPP) ---
+    # --- TAB 3: SINGLE TRIP PASSBOOK (WITH GR & POD TOGETHER) ---
     with tab3:
         st.markdown("### 🚚 गाड़ी का पक्का हिसाब")
         all_bk = get_sheet_data_for_reports("Bookings")
@@ -88,7 +86,6 @@ def show_reports_page():
                 sel_id = selected.split("ID: ")[1].strip()
                 trip_row = [r for r in data_bk if r[14] == sel_id][0]
                 
-                # Basic Details
                 truck_no = trip_row[6]
                 gr_no = trip_row[8]
                 dest = trip_row[7]
@@ -96,11 +93,9 @@ def show_reports_page():
                 weight = float(trip_row[5])
                 owner_freight = int(float(str(trip_row[12]).replace(',', '')))
                 
-                # 🟢 MUNSHIYANA LOGIC (₹1 per qty)
                 munshiyana = int(weight * 1)
                 net_freight_after_munshiyana = owner_freight - munshiyana
                 
-                # Advance Calc
                 all_adv = get_sheet_data_for_reports("Advances")
                 total_adv = 0; adv_history = []
                 if all_adv:
@@ -108,18 +103,26 @@ def show_reports_page():
                         if r[1].strip() == sel_id:
                             amt = int(float(str(r[8]).replace(',', '')))
                             total_adv += amt
-                            adv_history.append({"तारीख": r[0], "विवरण": f"Dsl: {r[3]} | Cash: {r[5]} | Bank: {r[6]}", "अमाउंट": f"₹{amt:,}"})
+                            adv_history.append({"तारीख": r[0], "विवरण": f"Dsl: {r[3]} | Cash: {r[5]} | Bank: {r[6]}", "अउंट": f"₹{amt:,}"})
 
-                # Balance Calc (From Owner_PODs)
-                all_bal = get_sheet_data_for_reports("Owner_PODs")
+                all_bal = get_sheet_data_for_reports("Owner_Ledger")
                 total_bal_paid = 0
+                pod_link = ""
                 if all_bal:
                     for r in all_bal[1:]:
-                        if r[1].strip() == sel_id:
-                            try: total_bal_paid += int(float(str(r[7]).replace(',', '')))
-                            except: pass
+                        if len(r) > 5 and r[1].strip() == sel_id:
+                            desc = str(r[4])
+                            if "POD Link:" in desc:
+                                pod_link = desc.replace("POD Link:", "").strip()
+                            if "Final Balance" in desc or "Shortage" in desc or "Extra" in desc or "Detention" in desc:
+                                try: total_bal_paid += int(float(str(r[5]).replace(',', '')))
+                                except: pass
+                total_bal_paid = abs(total_bal_paid)
+                
+                gr_link = ""
+                if len(trip_row) > 16 and "http" in str(trip_row[16]):
+                    gr_link = str(trip_row[16]).strip()
 
-                # Final Remaining
                 rem_balance = net_freight_after_munshiyana - total_adv - total_bal_paid
                 
                 st.write("---")
@@ -129,12 +132,21 @@ def show_reports_page():
                 c3.metric("कुल एडवांस", f"₹{total_adv:,}")
                 c4.metric("बाकी बकाया", f"₹{rem_balance:,}")
                 
+                if gr_link or pod_link:
+                    st.write("---")
+                    cc1, cc2 = st.columns(2)
+                    if gr_link: cc1.link_button("📄 GR (बिल्टी) कॉपी देखें", gr_link, use_container_width=True)
+                    if pod_link: cc2.link_button("🏁 POD (रिसीविंग) कॉपी देखें", pod_link, use_container_width=True)
+
                 if adv_history:
                     st.markdown("#### 📜 एडवांस पेमेंट हिस्ट्री")
                     st.table(pd.DataFrame(adv_history))
 
-                # 🟢 WHATSAPP COPY BOX
                 st.markdown("#### 📋 Copy for WhatsApp")
+                link_text = ""
+                if gr_link: link_text += f"\n*GR कॉपी:* {gr_link}"
+                if pod_link: link_text += f"\n*POD कॉपी:* {pod_link}"
+                
                 msg = f"""*गाड़ी का हिसाब *
 ----------------------------
 *गाड़ी नंबर:* {truck_no}
@@ -145,12 +157,12 @@ def show_reports_page():
 *कुल भाड़ा:* ₹{owner_freight:,}
 *मुंशीयाना (-):* ₹{munshiyana:,}
 *कुल एडवांस दिया:* ₹{total_adv:,}
-*बैलेंस पेमेंट:* ₹{total_bal_paid:,}
+*सेटलमेंट / कटिंग:* ₹{total_bal_paid:,}
 ----------------------------
 *बाकी बकाया:* ₹{rem_balance:,}
-----------------------------"""
-                st.text_area("नीचे से कॉपी करें:", value=msg, height=300)
-                st.info("💡 ऊपर दिए गए बॉक्स से टेक्स्ट कॉपी करके मालिक को भेज सकते हैं।")
+----------------------------{link_text}"""
+                st.text_area("नीचे से कॉपी करें:", value=msg, height=350)
+                st.info("💡 ऊपर बॉक्स से एक ही बार में हिसाब और दोनों कॉपियों (GR + POD) के लिंक कॉपी करें।")
         else:
             st.info("कोई बुकिंग उपलब्ध नहीं है।")
 
@@ -172,12 +184,63 @@ def show_reports_page():
             else: st.info("आज कोई एडवांस नहीं दिया गया।")
         
         st.write("---")
-        st.subheader("🏁 आज किए गए फाइनल हिसाब (Balance Payment)")
-        all_bal = get_sheet_data_for_reports("Owner_PODs")
+        st.subheader("🏁 आज किए गए फाइनल हिसाब (Owner Ledger Entries)")
+        all_bal = get_sheet_data_for_reports("Owner_Ledger")
         if all_bal:
-            today_bal = [r for r in all_bal[1:] if r[0] == s_date]
+            today_bal = [r for r in all_bal[1:] if r[0] == s_date and "POD Link:" not in str(r[4])]
             if today_bal:
                 df_today_bal = pd.DataFrame(today_bal, columns=all_bal[0])
-                st.table(df_today_bal[["Truck_No", "GR_No", "Balance_Paid", "Bank_Name"]])
-                st.success(f"कुल बैलेंस पेमेंट किया: ₹{df_today_bal['Balance_Paid'].astype(float).sum():,}")
+                st.table(df_today_bal[["Trip_ID", "Truck_No", "Description", "Credit_Debit_Amt"]])
             else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।")
+
+    # --- TAB 5: 🟢 NAYA TAB (GR & POD PRINT) - SUPER FAST SEARCH ---
+    with tab5:
+        st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD कॉपी)")
+        st.write("GR नंबर दर्ज करें और एक ही जगह पर GR और POD दोनों की कॉपी पाएँ।")
+        
+        search_gr = st.text_input("🔍 GR नंबर टाइप करें (उदा. 5050) और Enter दबाएँ:")
+        
+        if search_gr:
+            all_bk = get_sheet_data_for_reports("Bookings")
+            found_trip = None
+            
+            if len(all_bk) > 1:
+                for r in all_bk[1:]:
+                    if str(r[8]).strip().lower() == search_gr.strip().lower():
+                        found_trip = r
+                        break
+            
+            if found_trip:
+                sel_id = found_trip[14]
+                st.success(f"✅ गाड़ी {found_trip[6]} (कहाँ तक: {found_trip[7]}) का डेटा मिल गया!")
+                
+                gr_link = None
+                if len(found_trip) > 16 and "http" in str(found_trip[16]):
+                    gr_link = str(found_trip[16]).strip()
+                    
+                pod_link = None
+                owner_data = get_sheet_data_for_reports("Owner_Ledger")
+                if owner_data:
+                    for r in owner_data[1:]:
+                        if len(r) > 4 and r[1].strip() == sel_id and "POD Link:" in str(r[4]):
+                            pod_link = str(r[4]).replace("POD Link:", "").strip()
+                            break
+                
+                st.write("---")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("📄 GR (बिल्टी) कॉपी")
+                    if gr_link:
+                        st.link_button("🖨️ GR कॉपी प्रिंट करें / देखें", gr_link, type="primary", use_container_width=True)
+                    else:
+                        st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है।")
+                        
+                with col2:
+                    st.subheader("🏁 POD (रिसीविंग) कॉपी")
+                    if pod_link:
+                        st.link_button("🖨️ POD कॉपी प्रिंट करें / देखें", pod_link, type="primary", use_container_width=True)
+                    else:
+                        st.warning("⚠️ POD कॉपी अभी अपलोड नहीं है।")
+            else:
+                st.error("❌ इस GR नंबर से कोई गाड़ी नहीं मिली। कृपया सही नंबर टाइप करें।")
