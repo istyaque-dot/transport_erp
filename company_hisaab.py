@@ -80,7 +80,8 @@ def show_company_page():
         for _, row in df_last.iterrows():
             try:
                 gr = str(row.iloc[8]) if str(row.iloc[8]) else "No GR"
-                labels.append(f"GR: {gr} | 🚛 {row.iloc[6]} | 🏢 {row.iloc[2]} | 📅 {row.iloc[0]}")
+                # 🟢 NAYA FORMAT: गाड़ी नंबर | Date | Destination | GR No (Company का नाम हटा दिया गया है)
+                labels.append(f"🚛 {row.iloc[6]} | 📅 {row.iloc[0]} | 📍 {row.iloc[7]} | GR: {gr}")
                 trip_ids.append(str(row.iloc[14]))
             except: pass
         
@@ -116,7 +117,7 @@ def show_company_page():
                 st.warning(f"💰 **इस गाड़ी का बकाया: ₹{comp_balance:,}**")
                 
                 with st.form("payment_form"):
-                    st.write("👇 **पेमेंट, शॉर्टेज या एक्स्ट्रा KM चढ़ाएं:**")
+                    st.write("👇 **पेमेंट, शॉर्टेज या एक्स्ट्रा KM चढ़ाएं:**")
                     col1, col2 = st.columns(2)
                     with col1:
                         pay_rec = st.number_input("💵 पेमेंट प्राप्त हुआ (+ ₹)", min_value=0, step=100)
