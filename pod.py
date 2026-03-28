@@ -164,11 +164,9 @@ def show_pod_page():
                 with c2:
                     st.metric("एडवांस दे चुके", f"₹{total_adv:,}")
                 with c3:
-                    # 🟢 मुंशीयाना अब एडिट करने वाला बॉक्स है
                     default_munshi = int(weight * 1)
                     munshiyana = st.number_input("✍️ मुंशीयाना (Edit करें)", min_value=0, value=default_munshi, step=50)
                 
-                # मुंशीयाना के हिसाब से लाइव बैलेंस अपडेट होगा
                 current_bal = (owner_freight - munshiyana - total_adv) + already_adj
                 
                 if existing_pod_url:
@@ -177,7 +175,7 @@ def show_pod_page():
                 
                 st.divider()
 
-                # 🟢 BALANCE ZERO CASE (Only POD Upload)
+                # 🟢 BALANCE ZERO CASE (Only POD Upload needed)
                 if current_bal <= 0:
                     st.success(f"✅ इस गाड़ी का फुल एंड फाइनल हिसाब हो चुका है! (बैलेंस: ₹{current_bal:,})")
                     st.info(f"कुल भाड़ा (मुंशीयाना हटाकर): ₹{owner_freight - munshiyana:,} | कुल पेमेंट (एडवांस + फाइनल): ₹{total_adv:,}")
@@ -210,14 +208,43 @@ def show_pod_page():
                         else:
                             st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
 
-                # 🟢 BALANCE PENDING CASE (Settlement + POD Upload)
+                # 🟢 BALANCE PENDING CASE (Separated POD and Settlement)
                 else:
                     st.warning(f"💰 **अभी का बाकी बैलेंस: ₹{current_bal:,}**")
 
+                    # --- PART 1: सिर्फ POD अपलोड ---
+                    st.subheader("📄 1. बिल्टी (POD) अपलोड करें")
+                    st.write("अगर आपको सिर्फ बिल्टी सेव करनी है (पेमेंट बाद में करेंगे), तो यहाँ से करें:")
+                    up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_upload_separate")
+                    
+                    if st.button("🚀 सिर्फ बिल्टी (POD) सेव करें"):
+                        if up_files:
+                            with st.spinner("बिल्टी की PDF बन रही है और Drive पर सेव हो रही है..."):
+                                final_bytes, file_ext = prepare_pod_file(up_files)
+                                if final_bytes:
+                                    f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
+                                    d_id = upload_to_drive(final_bytes, f_name)
+                                    if d_id:
+                                        pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                        db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                        st.cache_data.clear()
+                                        st.success("✅ बिल्टी (POD) सुरक्षित सेव हो गई!")
+                                        time.sleep(2); st.rerun()
+                                    else:
+                                        st.error("❌ अपलोड फेल हो गया!")
+                                else:
+                                    st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
+                        else:
+                            st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+
+                    st.divider()
+
+                    # --- PART 2: सिर्फ पेमेंट/हिसाब ---
+                    st.subheader("💳 2. फाइनल पेमेंट और हिसाब (Settlement)")
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.subheader("🛠️ शॉर्टेज / एक्स्ट्रा (Adjustment)")
+                        st.write("शॉर्टेज/कटी डालें:")
                         shortage = st.number_input("Shortage / कटी (- ₹)", min_value=0, step=50)
                         extra_pay = st.number_input("Detention / Extra KM (+ ₹)", min_value=0, step=100)
                         adj_remark = st.text_input("कारण (Remarks / Comments)", value="Final Settlement")
@@ -226,16 +253,14 @@ def show_pod_page():
                         st.error(f"💵 **अब हाथ में देने वाली फाइनल रकम: ₹{final_payable:,}**")
 
                     with col2:
-                        st.subheader("💳 पेमेंट और POD अपलोड")
-                        st.write("कई पन्नों के लिए एक साथ सारी फोटो सेलेक्ट करें।")
-                        up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True)
+                        st.write("पेमेंट फाइनल करें:")
                         pay_mode = st.selectbox("कहाँ से पेमेंट किया?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
                         
-                        if st.button("✅ फुल एंड फाइनल (Close Account)", type="primary"):
+                        if st.button("✅ फुल एंड फाइनल पेमेंट करें", type="primary"):
                             if pay_mode == "N/A" and final_payable > 0:
                                 st.error("⚠️ कृपया बैंक या Cash चुनें!")
                             else:
-                                with st.spinner("हिसाब क्लोज हो रहा है और PDF बन रही है..."):
+                                with st.spinner("हिसाब क्लोज हो रहा है..."):
                                     t_date = str(datetime.date.today())
                                     
                                     if shortage > 0:
@@ -247,15 +272,6 @@ def show_pod_page():
 
                                     if final_payable > 0:
                                         save_balance_to_ledgers(db, t_date, trip_id, gr_no, truck_no, final_payable, pay_mode, adj_remark)
-                                    
-                                    if up_files:
-                                        final_bytes, file_ext = prepare_pod_file(up_files)
-                                        if final_bytes:
-                                            f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
-                                            d_id = upload_to_drive(final_bytes, f_name)
-                                            if d_id:
-                                                pod_url = f"https://drive.google.com/file/d/{d_id}/view"
-                                                db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                     
                                     st.cache_data.clear()
                                     st.success(f"🎊 हिसाब बराबर! ₹{final_payable:,} का सेटलमेंट हो गया।")
