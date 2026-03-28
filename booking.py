@@ -101,8 +101,8 @@ def update_booking_in_db(trip_id, updated_row):
         ids = sheet.col_values(15) 
         if trip_id in ids:
             row_index = ids.index(trip_id) + 1
-            # 🟢 FIX: Google Sheet update logic made more robust
-            sheet.update(values=[updated_row], range_name=f"A{row_index}:P{row_index}")
+            # 🟢 FIX: गूगल शीट अपडेट का पुराना और सॉलिड फॉर्मूला वापस लगा दिया
+            sheet.update(f"A{row_index}:P{row_index}", [updated_row])
             return True
     except: return False
 
@@ -145,7 +145,8 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
                 new_row_data = [str(date_val), str(trip_id), gr, "N/A", desc, amt]
             
             if row_to_update != -1: 
-                ws.update(values=[new_row_data], range_name=f"A{row_to_update}:F{row_to_update}")
+                # 🟢 FIX: यहाँ भी पुराना फॉर्मूला वापस लगा दिया है
+                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row_data])
             else: 
                 ws.append_row(new_row_data, table_range="A1")
         return True
@@ -263,7 +264,6 @@ def show_booking_page():
             for _, row in df_last.iterrows():
                 try:
                     gr_disp = str(row.iloc[8]) if pd.notna(row.iloc[8]) and str(row.iloc[8]).lower() != "nan" else "N/A"
-                    # 🟢 NAYA FORMAT (कंपनी हटा दी गई है, GR नंबर जोड़ा गया है)
                     labels.append(f"🚛 {row.iloc[6]} | 📅 {row.iloc[0]} | 📍 {row.iloc[7]} | GR: {gr_disp}")
                     trip_ids.append(str(row.iloc[14]))
                 except: pass
@@ -283,7 +283,6 @@ def show_booking_page():
                     def s_str(val):
                         return str(val) if pd.notna(val) and str(val).lower() != "nan" else ""
 
-                    # 🟢 GR Number Cleanup (अगर N/A है तो खाली दिखेगा)
                     current_gr = s_str(row_data.iloc[8])
                     if current_gr == "N/A": current_gr = ""
 
@@ -311,7 +310,6 @@ def show_booking_page():
                         with st.spinner("अपडेट हो रहा है..."):
                             e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
                             
-                            # 🟢 नया: अगर खाली है तो वापस N/A सेव कर दो
                             final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
                             
                             updated_row = [
@@ -321,7 +319,7 @@ def show_booking_page():
                             ]
                             if update_booking_in_db(selected_trip_id, updated_row):
                                 update_ledgers(e_date, selected_trip_id, final_gr, e_truck, e_to, e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt)
-                                st.success("✅ बुकिंग और GR नंबर सफलतापूर्वक अपडेट हो गए!")
+                                st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
                                 time.sleep(1.5)
                                 st.rerun()
                             else: st.error("❌ अपडेट फेल हो गया।")
