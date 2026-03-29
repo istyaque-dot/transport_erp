@@ -35,11 +35,25 @@ def get_company_balance_details(trip_id):
         total_balance = 0
         if len(comp_data) > 1:
             for row in comp_data[1:]:
-                if len(row) > 5 and str(row[1]) == str(trip_id):
+                if len(row) > 5 and str(row[1]).strip() == str(trip_id).strip():
                     try: total_balance += int(float(str(row[5]).replace(',', '')))
                     except: pass
         return total_balance
     except: return 0
+
+# 🟢 नया फंक्शन: POD लिंक ढूँढने के लिए
+def get_pod_link(trip_id):
+    try:
+        db = connect_to_sheet()
+        own_data = db.worksheet("Owner_Ledger").get_all_values()
+        if len(own_data) > 1:
+            for row in own_data[1:]:
+                if len(row) > 4 and str(row[1]).strip() == str(trip_id).strip():
+                    if "POD Link:" in str(row[4]):
+                        return str(row[4]).replace("POD Link:", "").strip()
+        return None
+    except:
+        return None
 
 def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_name, shortage, extra_km, remarks):
     try:
@@ -79,8 +93,7 @@ def show_company_page():
         labels, trip_ids = [], []
         for _, row in df_last.iterrows():
             try:
-                gr = str(row.iloc[8]) if str(row.iloc[8]) else "No GR"
-                # 🟢 NAYA FORMAT: गाड़ी नंबर | Date | Destination | GR No (Company का नाम हटा दिया गया है)
+                gr = str(row.iloc[8]) if str(row.iloc[8]) and str(row.iloc[8]).lower() != "nan" else "No GR"
                 labels.append(f"🚛 {row.iloc[6]} | 📅 {row.iloc[0]} | 📍 {row.iloc[7]} | GR: {gr}")
                 trip_ids.append(str(row.iloc[14]))
             except: pass
@@ -96,20 +109,37 @@ def show_company_page():
             truck_no = str(row_data.iloc[6])
             company_name = str(row_data.iloc[2])
             
-            # 🟢 गाड़ी की डिटेल और GR कॉपी का लिंक
             st.write("---")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.write(f"**🏢 कंपनी:** {company_name}")
-                st.write(f"**🚛 गाड़ी नंबर:** {truck_no}")
-            with c2:
-                if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
-                    st.success("✅ GR कॉपी अपलोड है")
-                    st.link_button("📄 बिल्टी (GR) देखें", str(row_data.iloc[16]))
+            st.write(f"**🏢 कंपनी:** {company_name} | **🚛 गाड़ी नंबर:** {truck_no}")
+            
+            # 🟢 GR और POD दोनों ढूँढने का लॉजिक
+            gr_link = None
+            if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
+                gr_link = str(row_data.iloc[16]).strip()
+                
+            pod_link = get_pod_link(selected_trip_id)
+            
+            # 🟢 दोनों बटन अगल-बगल दिखाना
+            st.markdown("#### 📄 डॉक्यूमेंट्स (GR और POD)")
+            doc_col1, doc_col2 = st.columns(2)
+            
+            with doc_col1:
+                if gr_link:
+                    st.success("✅ GR (बिल्टी) अपलोड है")
+                    st.link_button("📄 GR कॉपी देखें", gr_link, use_container_width=True)
                 else:
-                    st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है (बुकिंग एडिट से करें)")
+                    st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है")
                     
-            # 🟢 लाइव बैलेंस मीटर (सिर्फ इस गाड़ी के लिए)
+            with doc_col2:
+                if pod_link:
+                    st.success("✅ POD (रिसीविंग) अपलोड है")
+                    st.link_button("🏁 POD कॉपी देखें", pod_link, use_container_width=True)
+                else:
+                    st.warning("⚠️ POD कॉपी अभी अपलोड नहीं है")
+                    
+            st.write("---")
+            
+            # 🟢 लाइव बैलेंस मीटर
             comp_balance = get_company_balance_details(selected_trip_id)
             if comp_balance <= 0:
                 st.success(f"✅ इस गाड़ी का कंपनी से हिसाब क्लियर है! (बैलेंस: ₹{comp_balance:,})")
