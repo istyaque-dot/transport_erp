@@ -41,7 +41,6 @@ def get_company_balance_details(trip_id):
         return total_balance
     except: return 0
 
-# 🟢 नया फंक्शन: POD लिंक ढूँढने के लिए
 def get_pod_link(trip_id):
     try:
         db = connect_to_sheet()
@@ -55,13 +54,24 @@ def get_pod_link(trip_id):
     except:
         return None
 
-def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_name, shortage, extra_km, remarks):
+# 🟢 UPDATE: इस फंक्शन में tds को भी जोड़ दिया गया है
+def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_name, shortage, tds, extra_km, remarks):
     try:
         db = connect_to_sheet()
+        
+        # अगर कंपनी ने एक्स्ट्रा पैसा दिया (डिटेंशन आदि) तो बैलेंस बढ़ेगा
         if extra_km > 0:
             db.worksheet("Company_Ledger").append_row([str(date_val), trip_id, gr_no, truck_no, f"Detention/Extra: {remarks}", int(extra_km)])
+        
+        # अगर शॉर्टेज कटी तो बैलेंस कम होगा (माइनस)
         if shortage > 0:
             db.worksheet("Company_Ledger").append_row([str(date_val), trip_id, gr_no, truck_no, f"Shortage: {remarks}", -int(shortage)])
+            
+        # 🟢 NAYA: अगर TDS कटा तो बैलेंस कम होगा (माइनस)
+        if tds > 0:
+            db.worksheet("Company_Ledger").append_row([str(date_val), trip_id, gr_no, truck_no, f"TDS Deduction: {remarks}", -int(tds)])
+            
+        # बैंक में आया हुआ पैसा
         if pay_received > 0:
             db.worksheet("Company_Ledger").append_row([str(date_val), trip_id, gr_no, truck_no, f"Payment Recvd: {remarks}", -int(pay_received)])
             
@@ -80,11 +90,10 @@ def save_company_payment(date_val, trip_id, gr_no, truck_no, pay_received, bank_
 # ==========================================
 def show_company_page():
     st.header("🏢 कंपनी खाता और सेटलमेंट")
-    st.write("यहाँ आप किसी भी GR का पेमेंट रिसीव कर सकते हैं और उसका हिसाब चुकता कर सकते हैं।")
+    st.write("यहाँ आप किसी भी GR का पेमेंट, TDS और शॉर्टेज काटकर हिसाब चुकता कर सकते हैं।")
 
     st.divider()
 
-    # गाड़ी/GR सर्च और पेमेंट सेक्शन
     st.subheader("🔍 गाड़ी या GR का हिसाब करें")
     df_trips = get_all_trips()
 
@@ -112,14 +121,12 @@ def show_company_page():
             st.write("---")
             st.write(f"**🏢 कंपनी:** {company_name} | **🚛 गाड़ी नंबर:** {truck_no}")
             
-            # 🟢 GR और POD दोनों ढूँढने का लॉजिक
             gr_link = None
             if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
                 gr_link = str(row_data.iloc[16]).strip()
                 
             pod_link = get_pod_link(selected_trip_id)
             
-            # 🟢 दोनों बटन अगल-बगल दिखाना
             st.markdown("#### 📄 डॉक्यूमेंट्स (GR और POD)")
             doc_col1, doc_col2 = st.columns(2)
             
@@ -139,35 +146,39 @@ def show_company_page():
                     
             st.write("---")
             
-            # 🟢 लाइव बैलेंस मीटर
             comp_balance = get_company_balance_details(selected_trip_id)
             if comp_balance <= 0:
                 st.success(f"✅ इस गाड़ी का कंपनी से हिसाब क्लियर है! (बैलेंस: ₹{comp_balance:,})")
             else:
-                st.warning(f"💰 **इस गाड़ी का बकाया: ₹{comp_balance:,}**")
+                st.warning(f"💰 **इस गाड़ी का बकाया (Balance): ₹{comp_balance:,}**")
                 
                 with st.form("payment_form"):
-                    st.write("👇 **पेमेंट, शॉर्टेज या एक्स्ट्रा KM चढ़ाएं:**")
+                    st.write("👇 **पेमेंट, TDS, शॉर्टेज या एक्स्ट्रा चढ़ाएं:**")
+                    
+                    # 🟢 NAYA LAYOUT: TDS को जोड़ा गया
                     col1, col2 = st.columns(2)
                     with col1:
-                        pay_rec = st.number_input("💵 पेमेंट प्राप्त हुआ (+ ₹)", min_value=0, step=100)
+                        pay_rec = st.number_input("💵 बैंक में आया पेमेंट (+ ₹)", min_value=0, step=100)
                         bank = st.selectbox("🏦 बैंक चुनें", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
-                        shortage = st.number_input("📉 शॉर्टेज / कटी (- ₹)", min_value=0, step=50)
+                        tds = st.number_input("✂️ TDS कटा (- ₹)", min_value=0, step=10) # 🟢 TDS का ऑप्शन
                     with col2:
+                        shortage = st.number_input("📉 शॉर्टेज / कटी (- ₹)", min_value=0, step=50)
                         extra = st.number_input("📈 Detention/Extra (+ ₹)", min_value=0, step=100)
                         remark = st.text_input("📝 विवरण (e.g. UTR No.)")
                     
                     if st.form_submit_button("✅ हिसाब अपडेट करें", type="primary"):
                         if pay_rec > 0 and bank == "N/A":
                             st.error("⚠️ कृपया बैंक चुनें!")
-                        elif pay_rec == 0 and shortage == 0 and extra == 0:
+                        # 🟢 UPDATE: TDS को भी खाली होने की शर्त में जोड़ा
+                        elif pay_rec == 0 and shortage == 0 and extra == 0 and tds == 0:
                             st.error("⚠️ कृपया कोई अमाउंट भरें!")
                         else:
                             with st.spinner("अपडेट हो रहा है..."):
                                 t_date = str(datetime.date.today())
-                                if save_company_payment(t_date, selected_trip_id, gr_no, truck_no, pay_rec, bank, shortage, extra, remark):
+                                # 🟢 UPDATE: save_company_payment में tds भेजा गया
+                                if save_company_payment(t_date, selected_trip_id, gr_no, truck_no, pay_rec, bank, shortage, tds, extra, remark):
                                     st.cache_data.clear()
-                                    st.success("✅ कंपनी खाता अपडेट हो गया!")
+                                    st.success("✅ कंपनी खाता अपडेट हो गया और TDS कट गया!")
                                     time.sleep(1.5); st.rerun()
                                 else: st.error("❌ एरर! गूगल शीट चेक करें।")
     else: st.info("कोई डेटा नहीं मिला।")
