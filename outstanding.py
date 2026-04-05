@@ -40,7 +40,7 @@ def show_outstanding_page():
             own_raw = db.worksheet("Owner_Ledger").get_all_values()
             comp_raw = db.worksheet("Company_Ledger").get_all_values()
             
-            # रिसीवेबल और POD शीट को भी लोड करना (ताकि कोई पेमेंट न छूटे)
+            # रिसीवेबल और POD शीट को भी लोड करना
             try: rec_raw = db.worksheet("Receivables").get_all_values()
             except: rec_raw = []
             try: pod_raw = db.worksheet("Company_PODs").get_all_values()
@@ -66,26 +66,26 @@ def show_outstanding_page():
                         if any(x in desc for x in ["Final Balance", "Shortage", "Extra", "Detention"]):
                             own_ledg_map[tid] = own_ledg_map.get(tid, 0) + clean_amt(r[5])
 
-            # 3. कंपनी (पार्टी) का सेटलमेंट / आया हुआ पैसा (🟢 DOUBLE COUNTING BUG FIXED)
+            # 3. कंपनी (पार्टी) का सेटलमेंट / आया हुआ पैसा
             comp_ledg_map = {}
             
-            # A. Company Ledger से सिर्फ पेमेंट, TDS और शॉर्टेज उठाएं (भाड़ा नहीं)
+            # A. Company Ledger (यहाँ से TDS छोड़कर बाकी सब उठाएंगे, क्योंकि TDS हम खुद फिक्स 1% काटेंगे)
             if len(comp_raw) > 1:
                 for r in comp_raw[1:]:
                     if len(r) > 5:
                         tid = str(r[1]).strip()
                         desc = str(r[4])
-                        if any(x in desc for x in ["Payment", "TDS", "Shortage", "Extra", "Detention"]):
+                        if any(x in desc for x in ["Payment", "Shortage", "Extra", "Detention"]) and "TDS" not in desc:
                             comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) + clean_amt(r[5])
             
-            # B. Receivables शीट से आया हुआ पैसा जोड़ें
+            # B. Receivables शीट से आया हुआ पैसा जोड़ें (माइनस में)
             if len(rec_raw) > 1:
                 for r in rec_raw[1:]:
                     if len(r) > 4:
                         tid = str(r[1]).strip()
                         comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) - clean_amt(r[4])
                         
-            # C. Company PODs शीट से शॉर्टेज जोड़ें
+            # C. Company PODs शीट से शॉर्टेज जोड़ें (माइनस में)
             if len(pod_raw) > 1:
                 for r in pod_raw[1:]:
                     if len(r) > 5:
@@ -110,9 +110,14 @@ def show_outstanding_page():
                     # 🟢 कंपनी/पार्टी से लेना है (Company Receivables)
                     # ==========================================
                     comp_fr = clean_amt(row.iloc[11])
-                    comp_settlement = comp_ledg_map.get(tid, 0) # (TDS, Payment माइनस में होते हैं)
-                    c_bal = comp_fr + comp_settlement 
-                    comp_received = comp_fr - c_bal # कितना पैसा या टीडीएस कट/आ चुका है
+                    
+                    # 🟢 1% TDS ऑटोमैटिक काटना
+                    tds_amt = comp_fr * 0.01 
+                    expected_net = comp_fr - tds_amt # असली पैसा जो पार्टी से चाहिए
+                    
+                    comp_settlement = comp_ledg_map.get(tid, 0) 
+                    c_bal = expected_net + comp_settlement 
+                    comp_received = expected_net - c_bal # कितना पैसा आ चुका है
                     
                     # 10% से ज्यादा रुका हो तभी लिस्ट में आएगा
                     if comp_fr > 0 and c_bal > (0.10 * comp_fr):
@@ -123,8 +128,9 @@ def show_outstanding_page():
                             "कहाँ तक": dest,
                             "कंपनी (पार्टी)": comp_name,
                             "कुल भाड़ा": int(comp_fr),
+                            "TDS (1%)": int(tds_amt),     # 🟢 नया कॉलम
                             "आ चुका / कटा": int(comp_received),
-                            "बाकी लेना है": int(c_bal)
+                            "बाकी लेना है": int(c_bal)    # 🟢 TDS कटने के बाद का पक्का बैलेंस
                         })
                         total_lena += c_bal
 
