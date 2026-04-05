@@ -104,9 +104,10 @@ def show_advance_page():
         if selected != "चुनें...":
             row_data = df_last[df_last['label'] == selected].iloc[0]
             
-            trip_id = row_data[14]; truck_no = row_data[6]; dest = row_data[7]; gr_no = row_data[8]     
-            weight = float(row_data[5])  
-            owner_total_freight = int(row_data[12])  
+            # 🟢 FIX: यहाँ सब जगह .iloc लगा दिया गया है ताकि KeyError न आए
+            trip_id = row_data.iloc[14]; truck_no = row_data.iloc[6]; dest = row_data.iloc[7]; gr_no = row_data.iloc[8]     
+            weight = float(row_data.iloc[5])  
+            owner_total_freight = int(row_data.iloc[12])  
 
             munshiyana = weight * 1  
             net_freight = owner_total_freight - munshiyana
