@@ -40,6 +40,12 @@ def show_outstanding_page():
             own_raw = db.worksheet("Owner_Ledger").get_all_values()
             comp_raw = db.worksheet("Company_Ledger").get_all_values()
             
+            # रिसीवेबल और POD शीट को भी लोड करना (ताकि कोई पेमेंट न छूटे)
+            try: rec_raw = db.worksheet("Receivables").get_all_values()
+            except: rec_raw = []
+            try: pod_raw = db.worksheet("Company_PODs").get_all_values()
+            except: pod_raw = []
+            
             df_bk = pd.DataFrame(bk_raw[1:], columns=bk_raw[0])
             
             # 1. गाड़ी वालों का एडवांस
@@ -57,16 +63,34 @@ def show_outstanding_page():
                     if len(r) > 5:
                         tid = str(r[1]).strip()
                         desc = str(r[4])
-                        if "Final Balance" in desc or "Shortage" in desc or "Extra" in desc or "Detention" in desc:
+                        if any(x in desc for x in ["Final Balance", "Shortage", "Extra", "Detention"]):
                             own_ledg_map[tid] = own_ledg_map.get(tid, 0) + clean_amt(r[5])
 
-            # 3. कंपनी (पार्टी) का सेटलमेंट / आया हुआ पैसा
+            # 3. कंपनी (पार्टी) का सेटलमेंट / आया हुआ पैसा (🟢 DOUBLE COUNTING BUG FIXED)
             comp_ledg_map = {}
+            
+            # A. Company Ledger से सिर्फ पेमेंट, TDS और शॉर्टेज उठाएं (भाड़ा नहीं)
             if len(comp_raw) > 1:
                 for r in comp_raw[1:]:
                     if len(r) > 5:
                         tid = str(r[1]).strip()
-                        comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) + clean_amt(r[5])
+                        desc = str(r[4])
+                        if any(x in desc for x in ["Payment", "TDS", "Shortage", "Extra", "Detention"]):
+                            comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) + clean_amt(r[5])
+            
+            # B. Receivables शीट से आया हुआ पैसा जोड़ें
+            if len(rec_raw) > 1:
+                for r in rec_raw[1:]:
+                    if len(r) > 4:
+                        tid = str(r[1]).strip()
+                        comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) - clean_amt(r[4])
+                        
+            # C. Company PODs शीट से शॉर्टेज जोड़ें
+            if len(pod_raw) > 1:
+                for r in pod_raw[1:]:
+                    if len(r) > 5:
+                        tid = str(r[1]).strip()
+                        comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) - clean_amt(r[5])
 
             lena_data = []  # कंपनी से लेना है
             dena_data = []  # गाड़ी वालों को देना है
@@ -86,11 +110,11 @@ def show_outstanding_page():
                     # 🟢 कंपनी/पार्टी से लेना है (Company Receivables)
                     # ==========================================
                     comp_fr = clean_amt(row.iloc[11])
-                    comp_settlement = comp_ledg_map.get(tid, 0) # (TDS, Payment Recvd माइनस में होते हैं)
+                    comp_settlement = comp_ledg_map.get(tid, 0) # (TDS, Payment माइनस में होते हैं)
                     c_bal = comp_fr + comp_settlement 
                     comp_received = comp_fr - c_bal # कितना पैसा या टीडीएस कट/आ चुका है
                     
-                    # 10% से ज्यादा रुका हो तभी लिस्ट में आएगा (पुरानी शर्त)
+                    # 10% से ज्यादा रुका हो तभी लिस्ट में आएगा
                     if comp_fr > 0 and c_bal > (0.10 * comp_fr):
                         lena_data.append({
                             "तारीख": date,
