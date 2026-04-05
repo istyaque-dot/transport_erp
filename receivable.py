@@ -110,16 +110,21 @@ def show_receivable_page():
 
     df = get_all_trips()
     if not df.empty:
-        df_last = df.tail(20).iloc[::-1].copy()
+        # 🟢 BUG FIXED: '.tail(20)' हटा दिया गया है ताकि पूरी लिस्ट आए
+        df_last = df.iloc[::-1].copy()
+        
+        # 🟢 BUG FIXED: लेबल में GR नंबर जोड़ दिया गया है ताकि सर्च कर सकें
         df_last['label'] = (
             "📅 " + df_last.iloc[:, 0].astype(str) + " | " +
             "🚛 " + df_last.iloc[:, 6].astype(str) + " | " +
             "🏢 " + df_last.iloc[:, 2].astype(str) + " | " + 
+            "📄 GR: " + df_last.iloc[:, 8].astype(str) + " | " +
             "📍 " + df_last.iloc[:, 7].astype(str) + " | " + 
             "🆔 " + df_last.iloc[:, 14].astype(str)
         )
 
-        selected = st.selectbox("गाड़ी खोजें (तारीख | गाड़ी | कंपनी | कहाँ तक | ID)", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_rec_{c}")
+        st.info("💡 **टिप:** नीचे वाले डब्बे पर क्लिक करें और सीधे **GR नंबर**, **गाड़ी नंबर** या **कंपनी** का नाम टाइप करके सर्च करें।")
+        selected = st.selectbox("🔍 गाड़ी खोजें (तारीख | गाड़ी | GR नंबर | कंपनी | कहाँ तक)", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_rec_{c}")
 
         if selected != "चुनें...":
             row_data = df_last[df_last['label'] == selected].iloc[0]
