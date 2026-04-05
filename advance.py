@@ -17,7 +17,6 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    # 🟢 FIX: json.loads हटा दिया गया है क्योंकि Streamlit अब सीधा डिक्शनरी देता है
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
@@ -60,7 +59,6 @@ def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, ban
             s_name = {"canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(bank_name)
             if s_name: db.worksheet(s_name).append_row(base + [-int(bank_amt)], table_range="A1")
             
-        # 🟢 यहाँ डीज़ल को डेबिट (माइनस) कर दिया गया है
         if int(diesel_amt) > 0: db.worksheet("Shekh_Filling_Ledger").append_row(base + [-int(diesel_amt)], table_range="A1")
         
         st.cache_data.clear()
@@ -72,7 +70,6 @@ def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, ban
 # ==========================================
 
 def show_advance_page():
-    # 🟢 CSS Injection (फॉर्म के डब्बों की खाली जगह कम करने के लिए)
     st.markdown("""
         <style>
             div[data-testid="stForm"] > div > div { gap: 0.5rem; }
@@ -83,7 +80,6 @@ def show_advance_page():
 
     st.header("💸 गाड़ी का एडवांस (Advances)")
 
-    # 🟢 SESSION STATES
     if "adv_ck" not in st.session_state: st.session_state.adv_ck = 0
     if "show_adv_confirm" not in st.session_state: st.session_state.show_adv_confirm = False
     if "adv_saving_lock" not in st.session_state: st.session_state.adv_saving_lock = False
@@ -92,9 +88,9 @@ def show_advance_page():
 
     df = get_all_trips()
     if not df.empty:
-        df_last = df.tail(20).iloc[::-1].copy()
+        # 🟢 BUG FIXED: '.tail(20)' हटा दिया गया है ताकि पूरी लिस्ट आए
+        df_last = df.iloc[::-1].copy()
         
-        # 🟢 BUG FIXED: सर्च बॉक्स में GR नंबर जोड़ दिया गया है
         df_last['label'] = (
             "📅 " + df_last.iloc[:, 0].astype(str) + " | " + 
             "🚛 " + df_last.iloc[:, 6].astype(str) + " | " +
@@ -103,12 +99,12 @@ def show_advance_page():
             "🆔 " + df_last.iloc[:, 14].astype(str)
         )
 
+        st.info("💡 **टिप:** नीचे वाले डब्बे पर क्लिक करें और सीधे **GR नंबर** या **गाड़ी नंबर** टाइप करके सर्च करें।")
         selected = st.selectbox("🔍 गाड़ी खोजें (तारीख | गाड़ी | GR नंबर | कहाँ तक | ID)", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_{c}")
 
         if selected != "चुनें...":
             row_data = df_last[df_last['label'] == selected].iloc[0]
             
-            # 🟢 FIX: यहाँ सब जगह .iloc लगा दिया गया है ताकि KeyError न आए
             trip_id = row_data.iloc[14]; truck_no = row_data.iloc[6]; dest = row_data.iloc[7]; gr_no = row_data.iloc[8]     
             weight = float(row_data.iloc[5])  
             owner_total_freight = int(row_data.iloc[12])  
@@ -133,7 +129,6 @@ def show_advance_page():
 
             st.write("---")
 
-            # 1. डेटा भरने वाला फॉर्म
             if not st.session_state.show_adv_confirm:
                 with st.form(key=f"adv_form_{c}"):
                     adv_date = st.date_input("एडवांस की तारीख", datetime.date.today())
@@ -166,7 +161,6 @@ def show_advance_page():
                         st.session_state.show_adv_confirm = True
                         st.rerun()
 
-            # 2. कन्फर्मेशन वाली स्क्रीन (Safe Lock के साथ)
             if st.session_state.show_adv_confirm:
                 d = st.session_state.adv_temp_data
                 st.warning(f"❓ क्या आप पक्का **₹{int(d['total_given']):,}** का एडवांस सेव करना चाहते हैं?")
@@ -177,7 +171,7 @@ def show_advance_page():
                     if st.session_state.adv_saving_lock:
                         st.toast("⏳ प्रोसेस हो रहा है, कृपया रुकें...")
                     else:
-                        st.session_state.adv_saving_lock = True # Lock लगा दिया
+                        st.session_state.adv_saving_lock = True 
                         with st.spinner("⏳ डेटा सेव हो रहा है..."):
                             final_bank = d['bank_name'] if d['bank_amt'] > 0 else "N/A"
                             row = [str(d['adv_date']), str(d['trip_id']), str(d['truck_no']), int(d['diesel_amt']), d['pump_name'], int(d['cash_amt']), int(d['bank_amt']), final_bank, int(d['total_given'])]
@@ -186,7 +180,6 @@ def show_advance_page():
                                 save_advance_ledgers(d['adv_date'], d['trip_id'], d['gr_no'], d['dest'], d['cash_amt'], d['bank_amt'], final_bank, d['diesel_amt'], d['pump_name'])
                                 st.success("✅ एडवांस सफलतापूर्वक सेव और खाते में अपडेट हो गया!")
                                 time.sleep(1.5)
-                                # फॉर्म साफ़ कर दो
                                 st.session_state.adv_saving_lock = False
                                 st.session_state.show_adv_confirm = False
                                 st.session_state.adv_ck += 1 
