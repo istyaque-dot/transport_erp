@@ -24,6 +24,7 @@ def connect_to_sheet():
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
+
 @st.cache_data(ttl=60)
 def get_sheet_data_for_reports(sheet_name):
     try:
@@ -38,8 +39,10 @@ def get_sheet_data_for_reports(sheet_name):
 def get_ledger_stats(sheet_name):
     df = get_sheet_data_for_reports(sheet_name)
     if not df.empty:
-        df.iloc[:, -1] = pd.to_numeric(df.iloc[:, -1], errors='coerce').fillna(0)
-        return {"balance": int(df.iloc[:, -1].sum())}
+        # 🟢 BUG FIXED: Pandas TypeError से बचने के लिए बिना कॉलम को छेड़े सेफ कैलकुलेशन
+        last_col_data = df.iloc[:, -1].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
+        total_balance = pd.to_numeric(last_col_data, errors='coerce').fillna(0).sum()
+        return {"balance": int(total_balance)}
     return {"balance": 0}
 
 def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
@@ -54,7 +57,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
             "Shekh Filling (Pump)": "Shekh_Filling_Ledger",
             "Ishtyaque Ledger": "Ishtyaque_Ledger",
             "Universal Ledger": "Universal_Ledger",
-            "Canara 1747": "canara_1747"  # 🟢 नया अकाउंट यहाँ जुड़ गया
+            "Canara 1747": "canara_1747"  # 🟢 नया अकाउंट यहाँ जुड़ गया
         }
         
         f_s = s_map.get(from_acc)
@@ -75,7 +78,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
                 # Canara 1747 का स्पेशल 4-कॉलम फॉर्मेट: Date, Comment, To/From, Amount
                 db.worksheet(t_s).append_row([str(date_val), remarks if remarks else "Transfer In", f"From: {from_acc}", amt], table_range="A1")
             elif to_acc in ["Ishtyaque Ledger", "Universal Ledger"]:
-                # Ishtyaque और Universal के 6-कॉलम लेजर के लिए (इसे बिल्कुल नहीं छेड़ा गया है)
+                # Ishtyaque और Universal के 6-कॉलम लेजर के लिए (इसे बिल्कुल नहीं छेड़ा गया है)
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "N/A", "N/A", f"From: {from_acc}", amt], table_range="A1")
             else:
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc} | {remarks}", amt], table_range="A1")
@@ -126,7 +129,7 @@ def show_transfer_page():
     c2.metric("🏦 Canara 311", f"₹{c311_stat['balance']:,}")
     c3.metric("🏦 Canara 41", f"₹{c41_stat['balance']:,}")
     c4.metric("🏦 BOB", f"₹{bob_stat['balance']:,}")
-    c5.metric("🏦 Canara 1747", f"₹{c1747_stat['balance']:,}") # 🟢 नया मीटर जुड़ गया
+    c5.metric("🏦 Canara 1747", f"₹{c1747_stat['balance']:,}") # 🟢 नया मीटर जुड़ गया
     
     if pump_stat['balance'] < 0:
         c6.metric("⛽ Pump (उधार)", f"₹{abs(pump_stat['balance']):,}", "देना बाकी है ⏳", delta_color="inverse")
@@ -148,10 +151,10 @@ def show_transfer_page():
             
             col1, col2 = st.columns(2)
             with col1:
-                # 🟢 Sender लिस्ट में Canara 1747 जोड़ दिया
+                # 🟢 Sender लिस्ट में Canara 1747 जोड़ दिया
                 from_acc = st.selectbox("कहाँ से पैसा कटा (Sender)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747"])
             with col2:
-                # 🟢 Receiver लिस्ट में Canara 1747 जोड़ दिया
+                # 🟢 Receiver लिस्ट में Canara 1747 जोड़ दिया
                 to_acc = st.selectbox("कहाँ पैसा गया (Receiver)?", ["चुनें...", "Cash", "canara bank 311", "canara bank 41", "bob", "Canara 1747", "Shekh Filling (Pump)", "Ishtyaque Ledger", "Universal Ledger"])
 
             t_amt = st.number_input("कितना अमाउंट भेजा (₹)?", min_value=0, step=500)
