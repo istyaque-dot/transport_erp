@@ -24,6 +24,7 @@ def connect_to_sheet():
     client = gspread.authorize(creds)
     sheet = client.open("Khan_Transport_ERP")
     return sheet
+
 # ⚠️ यहाँ से cache हटा दिया ताकि लिस्ट तुरंत अपडेट हो
 def get_all_trips():
     try:
@@ -122,12 +123,14 @@ def show_receivable_page():
 
         if selected != "चुनें...":
             row_data = df_last[df_last['label'] == selected].iloc[0]
-            trip_id = row_data[14]
-            truck_no = row_data[6]
-            comp_name = row_data[2]
-            gr_no = row_data[8] if len(row_data) > 8 else "N/A" 
             
-            comp_total = int(row_data[11]) 
+            # 🟢 FIX: यहाँ सब जगह .iloc लगा दिया गया है ताकि KeyError न आए
+            trip_id = str(row_data.iloc[14])
+            truck_no = str(row_data.iloc[6])
+            comp_name = str(row_data.iloc[2])
+            gr_no = str(row_data.iloc[8]) if len(row_data) > 8 else "N/A" 
+            
+            comp_total = int(row_data.iloc[11]) 
             tds_amount = comp_total * 0.01 
             company_shortage = get_company_shortage(trip_id)
             net_receivable = comp_total - tds_amount - company_shortage
@@ -217,7 +220,7 @@ def show_receivable_page():
                             save_receivable_ledgers(d['rec_date'], d['trip_id'], d['gr_no'], d['comp_name'], d['truck_no'], d['received_amt'], d['bank_name'])
                             st.success("✅ पेमेंट सफलतापूर्वक सेव और खाते में अपडेट हो गई!")
                             time.sleep(1.5)
-                            # सब कुछ साफ़ कर दो
+                            # सब कुछ साफ़ कर दो
                             st.session_state.show_rec_confirm = False
                             st.session_state.rec_ck += 1 
                             st.rerun()
