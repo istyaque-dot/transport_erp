@@ -29,7 +29,7 @@ def clean_amt(val):
 # ==========================================
 def show_outstanding_page():
     st.header("💸 लेना और देना (Outstanding)")
-    st.write("यहाँ मार्केट (पार्टी) से लेने वाला और गाड़ी वालों को देने वाला पूरा हिसाब एक साथ देखें।")
+    st.write("यहाँ मार्केट (पार्टी) से लेने वाला और गाड़ी वालों को देने वाला पूरा हिसाब एक साथ देखें। (अगर पूरे कॉलम न दिखें, तो टेबल को दाएँ/Right स्क्रॉल करें ➡️)")
 
     db = connect_to_sheet()
     try:
@@ -69,7 +69,6 @@ def show_outstanding_page():
             # 3. कंपनी (पार्टी) का सेटलमेंट / आया हुआ पैसा
             comp_ledg_map = {}
             
-            # A. Company Ledger (यहाँ से TDS छोड़कर बाकी सब उठाएंगे, क्योंकि TDS हम खुद फिक्स 1% काटेंगे)
             if len(comp_raw) > 1:
                 for r in comp_raw[1:]:
                     if len(r) > 5:
@@ -78,22 +77,20 @@ def show_outstanding_page():
                         if any(x in desc for x in ["Payment", "Shortage", "Extra", "Detention"]) and "TDS" not in desc:
                             comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) + clean_amt(r[5])
             
-            # B. Receivables शीट से आया हुआ पैसा जोड़ें (माइनस में)
             if len(rec_raw) > 1:
                 for r in rec_raw[1:]:
                     if len(r) > 4:
                         tid = str(r[1]).strip()
                         comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) - clean_amt(r[4])
                         
-            # C. Company PODs शीट से शॉर्टेज जोड़ें (माइनस में)
             if len(pod_raw) > 1:
                 for r in pod_raw[1:]:
                     if len(r) > 5:
                         tid = str(r[1]).strip()
                         comp_ledg_map[tid] = comp_ledg_map.get(tid, 0) - clean_amt(r[5])
 
-            lena_data = []  # कंपनी से लेना है
-            dena_data = []  # गाड़ी वालों को देना है
+            lena_data = []  
+            dena_data = []  
             total_lena = 0
             total_dena = 0
 
@@ -111,13 +108,13 @@ def show_outstanding_page():
                     # ==========================================
                     comp_fr = clean_amt(row.iloc[11])
                     
-                    # 🟢 1% TDS ऑटोमैटिक काटना
+                    # 1% TDS ऑटोमैटिक काटना
                     tds_amt = comp_fr * 0.01 
-                    expected_net = comp_fr - tds_amt # असली पैसा जो पार्टी से चाहिए
+                    expected_net = comp_fr - tds_amt 
                     
                     comp_settlement = comp_ledg_map.get(tid, 0) 
                     c_bal = expected_net + comp_settlement 
-                    comp_received = expected_net - c_bal # कितना पैसा आ चुका है
+                    comp_received = expected_net - c_bal 
                     
                     # 10% से ज्यादा रुका हो तभी लिस्ट में आएगा
                     if comp_fr > 0 and c_bal > (0.10 * comp_fr):
@@ -126,11 +123,11 @@ def show_outstanding_page():
                             "गाड़ी नंबर": truck,
                             "GR नंबर": gr,
                             "कहाँ तक": dest,
-                            "कंपनी (पार्टी)": comp_name,
+                            "कंपनी": comp_name,
                             "कुल भाड़ा": int(comp_fr),
-                            "TDS (1%)": int(tds_amt),     # 🟢 नया कॉलम
-                            "आ चुका / कटा": int(comp_received),
-                            "बाकी लेना है": int(c_bal)    # 🟢 TDS कटने के बाद का पक्का बैलेंस
+                            "TDS (1%)": int(tds_amt),      # 🟢 TDS Column
+                            "कितना आ गया": int(comp_received), # 🟢 Received Column
+                            "बाकी बैलेंस": int(c_bal)        # 🟢 Balance Column
                         })
                         total_lena += c_bal
 
@@ -161,14 +158,13 @@ def show_outstanding_page():
                 except Exception as e:
                     continue 
 
-        # 🟢 डैशबोर्ड कार्ड्स (Cards)
+        # 🟢 डैशबोर्ड कार्ड्स
         c1, c2 = st.columns(2)
         c1.metric("🟢 पार्टी/मार्केट से कुल लेना है (>10%)", f"₹ {int(total_lena):,}")
         c2.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(total_dena):,}")
 
         st.divider()
 
-        # 🟢 टेबल्स (Tabs)
         t1, t2 = st.tabs(["🟢 कंपनियों / पार्टी से लेना है", "🔴 गाड़ी वालों को देना है"])
 
         with t1:
