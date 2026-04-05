@@ -53,7 +53,6 @@ def check_password():
 # ==========================================
 
 if check_password():
-    # 🟢 नई फाइल का लिंक यहाँ जोड़ दिया गया है
     from booking import show_booking_page
     from advance import show_advance_page
     from receivable import show_receivable_page
@@ -62,7 +61,9 @@ if check_password():
     from transfer import show_transfer_page
     from reports import show_reports_page
     from pod import show_pod_page  
-    from company_hisaab import show_company_page  # 🟢 नया पेज
+    from company_hisaab import show_company_page  
+    from payment_correction import show_payment_correction_page # 🟢 पेमेंट सुधार
+    from outstanding import show_outstanding_page # 🟢 नया पेज लेना-देना
 
     # --- SIDEBAR ---
     st.sidebar.markdown("<h2 style='text-align: center;'>🚛 transport ERP</h2>", unsafe_allow_html=True)
@@ -84,7 +85,9 @@ if check_password():
         "ट्रांसफर / पेमेंट (Contra)", 
         "रिपोर्ट्स (Reports)",
         "POD और फाइनल हिसाब",
-        "🏢 कंपनी खाता"  # 🟢 नया टैब लिस्ट में आ गया
+        "🏢 कंपनी खाता",
+        "🛠️ पेमेंट सुधार",              # 🟢 यह बटन वापस जोड़ दिया
+        "💸 लेना - देना (Outstanding)"   # 🟢 नया बटन
     ])
 
     # --- PAGE NAVIGATION ---
@@ -105,4 +108,8 @@ if check_password():
     elif choice == "POD और फाइनल हिसाब":
         show_pod_page()
     elif choice == "🏢 कंपनी खाता":
-        show_company_page()  # 🟢 यहाँ से नया पेज खुलेगा
+        show_company_page()
+    elif choice == "🛠️ पेमेंट सुधार":
+        show_payment_correction_page()
+    elif choice == "💸 लेना - देना (Outstanding)":
+        show_outstanding_page()
