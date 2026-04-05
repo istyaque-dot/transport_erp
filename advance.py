@@ -92,14 +92,18 @@ def show_advance_page():
 
     df = get_all_trips()
     if not df.empty:
-        df_last = df.tail(20).iloc[::-1]
+        df_last = df.tail(20).iloc[::-1].copy()
         
+        # 🟢 BUG FIXED: सर्च बॉक्स में GR नंबर जोड़ दिया गया है
         df_last['label'] = (
-            df_last.iloc[:, 0].astype(str) + " | " + df_last.iloc[:, 6].astype(str) + " | " +
-            df_last.iloc[:, 7].astype(str) + " | " + df_last.iloc[:, 14].astype(str)
+            "📅 " + df_last.iloc[:, 0].astype(str) + " | " + 
+            "🚛 " + df_last.iloc[:, 6].astype(str) + " | " +
+            "📄 GR: " + df_last.iloc[:, 8].astype(str) + " | " +
+            "📍 " + df_last.iloc[:, 7].astype(str) + " | " + 
+            "🆔 " + df_last.iloc[:, 14].astype(str)
         )
 
-        selected = st.selectbox("गाड़ी खोजें (तारीख | गाड़ी | कहाँ तक | ID)", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_{c}")
+        selected = st.selectbox("🔍 गाड़ी खोजें (तारीख | गाड़ी | GR नंबर | कहाँ तक | ID)", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_{c}")
 
         if selected != "चुनें...":
             row_data = df_last[df_last['label'] == selected].iloc[0]
