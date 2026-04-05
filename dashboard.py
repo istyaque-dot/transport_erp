@@ -1,30 +1,131 @@
 import streamlit as st
 import pandas as pd
-from database import get_dashboard_stats, get_all_trips
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
+# ==========================================
+# 🗄️ DATABASE FUNCTIONS
+# ==========================================
+@st.cache_resource(ttl=86400)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
+
+def clean_amt(val):
+    try:
+        if str(val).strip() == "": return 0
+        return float(str(val).replace(',', '').replace('₹', '').strip())
+    except: return 0
+
+@st.cache_data(ttl=30) # 30 सेकंड में ऑटो-रिफ्रेश
+def get_ledger_balance(sheet_name):
+    try:
+        db = connect_to_sheet()
+        data = db.worksheet(sheet_name).get_all_values()
+        if len(data) > 1:
+            df = pd.DataFrame(data[1:], columns=data[0])
+            # आखिरी कॉलम का टोटल निकालना
+            vals = df.iloc[:, -1].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
+            return int(pd.to_numeric(vals, errors='coerce').fillna(0).sum())
+    except: pass
+    return 0
+
+@st.cache_data(ttl=60)
+def get_truck_payable():
+    try:
+        db = connect_to_sheet()
+        bk_raw = db.worksheet("Bookings").get_all_values()
+        adv_raw = db.worksheet("Advances").get_all_values()
+        own_raw = db.worksheet("Owner_Ledger").get_all_values()
+
+        df_bk = pd.DataFrame(bk_raw[1:], columns=bk_raw[0])
+
+        adv_map = {}
+        if len(adv_raw) > 1:
+            for r in adv_raw[1:]:
+                if len(r) > 8:
+                    tid = str(r[1]).strip()
+                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
+
+        own_ledg_map = {}
+        if len(own_raw) > 1:
+            for r in own_raw[1:]:
+                if len(r) > 5:
+                    tid = str(r[1]).strip()
+                    desc = str(r[4])
+                    if any(x in desc for x in ["Final Balance", "Shortage", "Extra", "Detention"]):
+                        own_ledg_map[tid] = own_ledg_map.get(tid, 0) + clean_amt(r[5])
+
+        total_dena = 0
+        for _, row in df_bk.iterrows():
+            if len(row) < 15: continue
+            tid = str(row.iloc[14]).strip()
+            try:
+                own_fr = clean_amt(row.iloc[12])
+                if own_fr > 0:
+                    munshiyana = clean_amt(row.iloc[5]) * 1
+                    adv_given = adv_map.get(tid, 0)
+                    own_settlement = own_ledg_map.get(tid, 0) 
+                    o_bal = (own_fr - munshiyana) - adv_given + own_settlement
+                    
+                    if o_bal > 10: 
+                        total_dena += o_bal
+            except: pass
+        return total_dena
+    except: return 0
+
+# ==========================================
+# 🖥️ USER INTERFACE (डैशबोर्ड पेज)
+# ==========================================
 def show_dashboard_page():
-    st.header("📊 डैशबोर्ड (Dashboard)")
+    st.header("📊 बिज़नेस समरी (Dashboard)")
+    st.write("आपके पूरे ट्रांसपोर्ट बिज़नेस का 'लाइव' हिसाब-किताब एक ही जगह पर।")
     
-    stats = get_dashboard_stats()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("कुल गाड़ियाँ", stats.get("total_trips", 0))
-    col2.metric("कुल कंपनी भाड़ा", f"₹{stats.get('total_freight', 0):,}")
-    col3.metric("कुल एडवांस दिया", f"₹{stats.get('total_advance', 0):,}")
-    col4.metric("कुल रिसीव (क्लियर)", f"₹{stats.get('total_cleared', 0):,}")
-    
-    st.write("---")
-    st.subheader("📋 हाल ही की बुकिंग (Recent Bookings)")
-    
-    df = get_all_trips()
-    if not df.empty:
-        df_display = df.tail(10).iloc[::-1]
-        try:
-            # 5 ज़रूरी चीज़ें दिखाना: Date, Truck, To, Company, Comp_Freight
-            display_cols = df_display.iloc[:, [0, 6, 7, 2, 11]]
-            display_cols.columns = ["तारीख", "गाड़ी नंबर", "कहाँ तक", "कंपनी", "भाड़ा"]
-            st.dataframe(display_cols, use_container_width=True)
-        except:
-            st.dataframe(df_display, use_container_width=True)
+    if st.button("🔄 रिफ्रेश करें (Refresh)"):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.divider()
+
+    # --- सेक्शन 1: बैंक और नकद ---
+    st.subheader("🏦 बैंक और नकद (Bank & Cash)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("💵 गल्ला (Cash)", f"₹ {get_ledger_balance('Cash_Ledger'):,}")
+    c2.metric("🏦 Canara 311", f"₹ {get_ledger_balance('Canara_311_Ledger'):,}")
+    c3.metric("🏦 Canara 41", f"₹ {get_ledger_balance('Canara_41_Ledger'):,}")
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("🏦 BOB (Bank of Baroda)", f"₹ {get_ledger_balance('BOB_Ledger'):,}")
+    c5.metric("🏦 Canara 1747", f"₹ {get_ledger_balance('canara_1747'):,}")
+    c6.empty() # जगह खाली रखने के लिए
+
+    st.divider()
+
+    # --- सेक्शन 2: खास खाते और पंप ---
+    st.subheader("👤 खास खाते (Special Ledgers)")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("इश्तियाक भाई (Ishtyaque)", f"₹ {get_ledger_balance('Ishtyaque_Ledger'):,}")
+    col2.metric("यूनिवर्सल (Universal)", f"₹ {get_ledger_balance('Universal_Ledger'):,}")
+
+    pump_bal = get_ledger_balance('Shekh_Filling_Ledger')
+    if pump_bal < 0:
+        col3.metric("⛽ शेख फिलिंग (Pump)", f"₹ {abs(pump_bal):,}", "देना बाकी है ⏳", delta_color="inverse")
+    elif pump_bal > 0:
+        col3.metric("⛽ शेख फिलिंग (Pump)", f"₹ {pump_bal:,}", "एडवांस जमा है ✅", delta_color="normal")
     else:
-        st.info("अभी कोई गाड़ी लोड नहीं हुई है।")
+        col3.metric("⛽ शेख फिलिंग (Pump)", f"₹ 0", "हिसाब क्लियर ✅", delta_color="normal")
+
+    st.divider()
+
+    # --- सेक्शन 3: देनदारी (Payables) ---
+    st.subheader("🚛 मार्केट की देनदारी (Market Payables)")
+    truck_payable = get_truck_payable()
+    st.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(truck_payable):,}")
+    st.caption("नोट: गाड़ी वालों का पूरा 'डिटेल हिसाब' देखने के लिए साइड मेनू से 'लेना - देना (Outstanding)' पेज पर जाएँ।")
