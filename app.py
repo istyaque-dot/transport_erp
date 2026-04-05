@@ -11,13 +11,11 @@ st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 def check_password():
     """लॉगिन फॉर्म दिखाता है और पासवर्ड चेक करता है।"""
     def password_entered():
-        # Check if keys exist before accessing
         username = st.session_state.get("username", "")
         password = st.session_state.get("password", "")
         
         if username == "admin" and password == "khan786":
             st.session_state["password_correct"] = True
-            # सुरक्षा के लिए पासवर्ड डिलीट करें
             if "password" in st.session_state:
                 del st.session_state["password"]
             if "username" in st.session_state:
@@ -25,11 +23,9 @@ def check_password():
         else:
             st.session_state["password_correct"] = False
 
-    # Check if already logged in
     if st.session_state.get("password_correct", False):
         return True
     
-    # Show login form
     st.markdown("<h2 style='text-align: center;'>🔐  Transport ERP Login</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     
@@ -42,7 +38,6 @@ def check_password():
             if submitted:
                 password_entered()
     
-    # Show error if login failed
     if st.session_state.get("password_correct") == False:
         st.error("❌ गलत यूजरनेम या पासवर्ड!")
     
@@ -68,7 +63,6 @@ if check_password():
     st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Transport ERP</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<p style='text-align: center; color: gray;'>Today: {datetime.date.today()}</p>", unsafe_allow_html=True)
     
-    # लॉगआउट बटन
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
@@ -76,7 +70,7 @@ if check_password():
     st.sidebar.markdown("---")
 
     choice = st.sidebar.radio("कहाँ जाना है?", [
-        "🏠 होम (Home)",                  # 🟢 सबसे ऊपर नया पेज
+        "🏠 होम (Home)",                  
         "बुकिंग", 
         "एडवांस", 
         "रिसिवेबल (पार्टी पेमेंट)", 
@@ -86,13 +80,26 @@ if check_password():
         "POD और फाइनल हिसाब",
         "🏢 कंपनी खाता",
         "💸 लेना - देना (Outstanding)",
-        "📊 डैशबोर्ड"                     # 🟢 डैशबोर्ड सबसे नीचे चला गया
+        "📊 डैशबोर्ड"                     
     ])
 
     # --- PAGE NAVIGATION ---
     if choice == "🏠 होम (Home)":
-        # 🟢 होम पेज पर सिर्फ कंपनी का नाम दिखेगा
-        st.markdown("<br><br><br><br><h1 style='text-align: center; font-size: 65px; color: #2C3E50;'>BAZPUR UP TRANSPORT COMPANY</h1>", unsafe_allow_html=True)
+        # 🟢 होम पेज का नया आकर्षक डिज़ाइन
+        st.markdown("""
+            <div style='text-align: center; padding-top: 10vh;'>
+                <h1 style='font-size: 85px; font-weight: 900; background: -webkit-linear-gradient(45deg, #1e3c72, #2a5298); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0px;'>
+                    BAZPUR UP
+                </h1>
+                <h2 style='font-size: 45px; font-weight: 800; color: #E74C3C; letter-spacing: 3px; margin-top: 5px; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);'>
+                    TRANSPORT COMPANY
+                </h2>
+                <p style='font-size: 24px; color: #555; font-weight: 500; margin-top: 15px;'>
+                    सुरक्षित, तेज़ और भरोसेमंद 🚛
+                </p>
+                <hr style='width: 25%; border: 2px solid #2a5298; margin: auto; border-radius: 5px; margin-top: 30px;'>
+            </div>
+        """, unsafe_allow_html=True)
     elif choice == "बुकिंग":
         show_booking_page()
     elif choice == "एडवांस":
