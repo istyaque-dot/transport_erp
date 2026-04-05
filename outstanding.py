@@ -42,52 +42,62 @@ def show_outstanding_page():
         
         # एडवांस और लेजर को डिक्शनरी में डालना (फास्ट सर्च के लिए)
         adv_map = {}
-        for r in adv_raw[1:]:
-            if len(r) > 8:
-                tid = str(r[1]).strip()
-                adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
+        if len(adv_raw) > 1:
+            for r in adv_raw[1:]:
+                if len(r) > 8:
+                    tid = str(r[1]).strip()
+                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
                 
         ledg_map = {}
-        for r in own_raw[1:]:
-            if len(r) > 5:
-                tid = str(r[1]).strip()
-                ledg_map[tid] = ledg_map.get(tid, 0) + clean_amt(r[5])
+        if len(own_raw) > 1:
+            for r in own_raw[1:]:
+                if len(r) > 5:
+                    tid = str(r[1]).strip()
+                    ledg_map[tid] = ledg_map.get(tid, 0) + clean_amt(r[5])
 
         dena_data = []
         total_payable = 0
 
         for _, row in df_bk.iterrows():
-            tid = str(row.iloc[14]).strip()
-            truck = str(row.iloc[6])
-            # मालिक का कुल भाड़ा
-            total_fr = clean_amt(row.iloc[12])
-            # मुंशीयाना (वजन * 1 रुपये)
-            munshiyana = clean_amt(row.iloc[5]) * 1
-            
-            adv_given = adv_map.get(tid, 0)
-            settlement = ledg_map.get(tid, 0) # शॉर्टेज या एक्स्ट्रा
-            
-            # असली बकाया = (कुल भाड़ा - मुंशीयाना) - एडवांस + सेटलमेंट
-            balance = (total_fr - munshiyana) - adv_given + settlement
-            
-            if balance > 10: # 10 रुपये से ज्यादा का ही बकाया दिखाएगा
-                dena_data.append({
-                    "गाड़ी नंबर": truck,
-                    "तारीख": row.iloc[0],
-                    "कुल भाड़ा": int(total_fr),
-                    "मुंशीयाना": int(munshiyana),
-                    "कुल एडवांस": int(adv_given),
-                    "बाकी बकाया": int(balance)
-                })
-                total_payable += balance
+            try:
+                tid = str(row.iloc[14]).strip()
+                truck = str(row.iloc[6])
+                dest = str(row.iloc[7]) # 🟢 नया: कहाँ तक (Destination)
+                gr = str(row.iloc[8]) if str(row.iloc[8]).strip() != "" else "N/A" # 🟢 नया: GR नंबर
+                
+                # मालिक का कुल भाड़ा
+                total_fr = clean_amt(row.iloc[12])
+                # मुंशीयाना (वजन * 1 रुपये)
+                munshiyana = clean_amt(row.iloc[5]) * 1
+                
+                adv_given = adv_map.get(tid, 0)
+                settlement = ledg_map.get(tid, 0) # शॉर्टेज या एक्स्ट्रा
+                
+                # असली बकाया = (कुल भाड़ा - मुंशीयाना) - एडवांस + सेटलमेंट
+                balance = (total_fr - munshiyana) - adv_given + settlement
+                
+                if balance > 10: # 10 रुपये से ज्यादा का ही बकाया दिखाएगा
+                    dena_data.append({
+                        "गाड़ी नंबर": truck,
+                        "तारीख": row.iloc[0],
+                        "GR नंबर": gr,        # 🟢 लिस्ट में जोड़ा गया
+                        "कहाँ तक": dest,      # 🟢 लिस्ट में जोड़ा गया
+                        "कुल भाड़ा": int(total_fr),
+                        "मुंशीयाना": int(munshiyana),
+                        "कुल एडवांस": int(adv_given),
+                        "बाकी बकाया": int(balance)
+                    })
+                    total_payable += balance
+            except:
+                continue # अगर किसी लाइन में डेटा खाली हो तो उसे छोड़ दे
 
         # डिस्प्ले कार्ड
         st.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(total_payable):,}")
         
         if dena_data:
             df_dena = pd.DataFrame(dena_data)
-            # गाड़ी नंबर के हिसाब से ग्रुप करना
-            df_dena = df_dena.sort_values(by="गाड़ी नंबर")
+            # 🟢 गाड़ी नंबर के हिसाब से ग्रुप करना (नई तारीख पहले)
+            df_dena = df_dena.sort_values(by=["तारीख", "गाड़ी नंबर"], ascending=[False, True])
             st.dataframe(df_dena, use_container_width=True, hide_index=True)
             
             # एक्सेल डाउनलोड
