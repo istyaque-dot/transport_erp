@@ -28,8 +28,8 @@ def clean_amt(val):
 # 🖥️ USER INTERFACE
 # ==========================================
 def show_outstanding_page():
-    st.header("💸 गाड़ी मालिकों का बकाया (Truck-wise Payables)")
-    st.write("यहाँ हर गाड़ी का कुल भाड़ा, एडवांस और बचा हुआ बैलेंस एक साथ देखें।")
+    st.header("💸 गाड़ी मालिकों का बकाया (Truck-wise Payables)")
+    st.write("यहाँ हर गाड़ी का कुल भाड़ा, एडवांस और बचा हुआ बैलेंस एक साथ देखें।")
 
     db = connect_to_sheet()
     try:
@@ -40,7 +40,7 @@ def show_outstanding_page():
         
         df_bk = pd.DataFrame(bk_raw[1:], columns=bk_raw[0])
         
-        # एडवांस और लेजर को डिक्शनरी में डालना (फास्ट सर्च के लिए)
+        # 1. एडवांस का टोटल (सिर्फ Advances शीट से)
         adv_map = {}
         if len(adv_raw) > 1:
             for r in adv_raw[1:]:
@@ -48,12 +48,16 @@ def show_outstanding_page():
                     tid = str(r[1]).strip()
                     adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
                 
+        # 2. लेजर की कटिंग का टोटल (सिर्फ शॉर्टेज, एक्स्ट्रा और फाइनल पेमेंट)
+        # 🟢 BUG FIXED: भाड़ा दो बार ना जुड़े इसलिए सिर्फ कटिंग वाली एंट्री लेंगे
         ledg_map = {}
         if len(own_raw) > 1:
             for r in own_raw[1:]:
                 if len(r) > 5:
                     tid = str(r[1]).strip()
-                    ledg_map[tid] = ledg_map.get(tid, 0) + clean_amt(r[5])
+                    desc = str(r[4])
+                    if "Final Balance" in desc or "Shortage" in desc or "Extra" in desc or "Detention" in desc:
+                        ledg_map[tid] = ledg_map.get(tid, 0) + clean_amt(r[5])
 
         dena_data = []
         total_payable = 0
@@ -62,49 +66,48 @@ def show_outstanding_page():
             try:
                 tid = str(row.iloc[14]).strip()
                 truck = str(row.iloc[6])
-                dest = str(row.iloc[7]) # 🟢 नया: कहाँ तक (Destination)
-                gr = str(row.iloc[8]) if str(row.iloc[8]).strip() != "" else "N/A" # 🟢 नया: GR नंबर
+                dest = str(row.iloc[7]) 
+                gr = str(row.iloc[8]) if str(row.iloc[8]).strip() != "" else "N/A"
                 
-                # मालिक का कुल भाड़ा
+                # मालिक का कुल भाड़ा और मुंशीयाना
                 total_fr = clean_amt(row.iloc[12])
-                # मुंशीयाना (वजन * 1 रुपये)
                 munshiyana = clean_amt(row.iloc[5]) * 1
                 
                 adv_given = adv_map.get(tid, 0)
-                settlement = ledg_map.get(tid, 0) # शॉर्टेज या एक्स्ट्रा
+                settlement_cuttings = ledg_map.get(tid, 0) 
                 
-                # असली बकाया = (कुल भाड़ा - मुंशीयाना) - एडवांस + सेटलमेंट
-                balance = (total_fr - munshiyana) - adv_given + settlement
+                # 🟢 सही कैलकुलेशन: (कुल भाड़ा - मुंशीयाना) - कुल एडवांस + लेजर की कटिंग
+                balance = (total_fr - munshiyana) - adv_given + settlement_cuttings
                 
                 if balance > 10: # 10 रुपये से ज्यादा का ही बकाया दिखाएगा
                     dena_data.append({
-                        "गाड़ी नंबर": truck,
+                        "गाड़ी नंबर": truck,
                         "तारीख": row.iloc[0],
-                        "GR नंबर": gr,        # 🟢 लिस्ट में जोड़ा गया
-                        "कहाँ तक": dest,      # 🟢 लिस्ट में जोड़ा गया
-                        "कुल भाड़ा": int(total_fr),
+                        "GR नंबर": gr,        
+                        "कहाँ तक": dest,      
+                        "कुल भाड़ा": int(total_fr),
                         "मुंशीयाना": int(munshiyana),
                         "कुल एडवांस": int(adv_given),
                         "बाकी बकाया": int(balance)
                     })
                     total_payable += balance
             except:
-                continue # अगर किसी लाइन में डेटा खाली हो तो उसे छोड़ दे
+                continue 
 
         # डिस्प्ले कार्ड
-        st.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(total_payable):,}")
+        st.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(total_payable):,}")
         
         if dena_data:
             df_dena = pd.DataFrame(dena_data)
-            # 🟢 गाड़ी नंबर के हिसाब से ग्रुप करना (नई तारीख पहले)
-            df_dena = df_dena.sort_values(by=["तारीख", "गाड़ी नंबर"], ascending=[False, True])
+            # गाड़ी नंबर के हिसाब से ग्रुप करना 
+            df_dena = df_dena.sort_values(by=["तारीख", "गाड़ी नंबर"], ascending=[False, True])
             st.dataframe(df_dena, use_container_width=True, hide_index=True)
             
             # एक्सेल डाउनलोड
             csv = df_dena.to_csv(index=False).encode('utf-8')
             st.download_button("📥 पूरी लिस्ट डाउनलोड करें", csv, "Truck_Outstanding.csv", "text/csv")
         else:
-            st.success("सब क्लियर है! किसी गाड़ी वाले का कोई बकाया नहीं है।")
+            st.success("सब क्लियर है! किसी गाड़ी वाले का कोई बकाया नहीं है।")
 
     except Exception as e:
         st.error(f"डेटा लोड करने में दिक्कत आई: {e}")
