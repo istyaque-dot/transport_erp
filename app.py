@@ -62,10 +62,10 @@ if check_password():
     from reports import show_reports_page
     from pod import show_pod_page  
     from company_hisaab import show_company_page  
-    from outstanding import show_outstanding_page # 🟢 नया पेज लेना-देना
+    from outstanding import show_outstanding_page 
 
     # --- SIDEBAR ---
-    st.sidebar.markdown("<h2 style='text-align: center;'>🚛 transport ERP</h2>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h2 style='text-align: center;'>🚛 Transport ERP</h2>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<p style='text-align: center; color: gray;'>Today: {datetime.date.today()}</p>", unsafe_allow_html=True)
     
     # लॉगआउट बटन
@@ -76,7 +76,7 @@ if check_password():
     st.sidebar.markdown("---")
 
     choice = st.sidebar.radio("कहाँ जाना है?", [
-        "डैशबोर्ड", 
+        "🏠 होम (Home)",                  # 🟢 सबसे ऊपर नया पेज
         "बुकिंग", 
         "एडवांस", 
         "रिसिवेबल (पार्टी पेमेंट)", 
@@ -85,12 +85,14 @@ if check_password():
         "रिपोर्ट्स (Reports)",
         "POD और फाइनल हिसाब",
         "🏢 कंपनी खाता",
-        "💸 लेना - देना (Outstanding)"   # 🟢 नया बटन यहाँ है
+        "💸 लेना - देना (Outstanding)",
+        "📊 डैशबोर्ड"                     # 🟢 डैशबोर्ड सबसे नीचे चला गया
     ])
 
     # --- PAGE NAVIGATION ---
-    if choice == "डैशबोर्ड":
-        show_dashboard_page()
+    if choice == "🏠 होम (Home)":
+        # 🟢 होम पेज पर सिर्फ कंपनी का नाम दिखेगा
+        st.markdown("<br><br><br><br><h1 style='text-align: center; font-size: 65px; color: #2C3E50;'>BAZPUR UP TRANSPORT COMPANY</h1>", unsafe_allow_html=True)
     elif choice == "बुकिंग":
         show_booking_page()
     elif choice == "एडवांस":
@@ -109,3 +111,5 @@ if check_password():
         show_company_page()
     elif choice == "💸 लेना - देना (Outstanding)":
         show_outstanding_page()
+    elif choice == "📊 डैशबोर्ड":
+        show_dashboard_page()
