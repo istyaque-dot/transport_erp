@@ -79,12 +79,12 @@ def show_reports_page():
         all_bk = get_sheet_data_for_reports("Bookings")
         if len(all_bk) > 1:
             data_bk = all_bk[1:][::-1]
-            trip_options = [f"🚛 {r[6]} | GR: {r[8]} | ID: {r[14]}" for r in data_bk]
+            trip_options = [f"🚛 {r[6]} | GR: {r[8]} | ID: {r[14]}" for r in data_bk if len(r) > 14]
             selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + trip_options)
             
             if selected != "चुनें...":
                 sel_id = selected.split("ID: ")[1].strip()
-                trip_row = [r for r in data_bk if r[14] == sel_id][0]
+                trip_row = [r for r in data_bk if len(r) > 14 and r[14] == sel_id][0]
                 
                 truck_no = trip_row[6]
                 gr_no = trip_row[8]
@@ -100,10 +100,10 @@ def show_reports_page():
                 total_adv = 0; adv_history = []
                 if all_adv:
                     for r in all_adv[1:]:
-                        if r[1].strip() == sel_id:
+                        if len(r) > 8 and r[1].strip() == sel_id:
                             amt = int(float(str(r[8]).replace(',', '')))
                             total_adv += amt
-                            adv_history.append({"तारीख": r[0], "विवरण": f"Dsl: {r[3]} | Cash: {r[5]} | Bank: {r[6]}", "अउंट": f"₹{amt:,}"})
+                            adv_history.append({"तारीख": r[0], "विवरण": f"Dsl: {r[3]} | Cash: {r[5]} | Bank: {r[6]}", "अमाउंट": f"₹{amt:,}"})
 
                 all_bal = get_sheet_data_for_reports("Owner_Ledger")
                 total_bal_paid = 0
@@ -176,24 +176,33 @@ def show_reports_page():
         st.subheader("🚛 आज दिए गए एडवांस (Advances)")
         all_adv = get_sheet_data_for_reports("Advances")
         if all_adv:
-            today_adv = [r for r in all_adv[1:] if r[0] == s_date]
+            today_adv = [r for r in all_adv[1:] if len(r) > 8 and r[0] == s_date]
             if today_adv:
-                df_today_adv = pd.DataFrame(today_adv, columns=all_adv[0])
-                st.table(df_today_adv[["truck_no", "Diesel_Amt", "Cash_Amt", "Bank_Amt", "Total_Advance"]])
-                st.success(f"कुल एडवांस दिया: ₹{df_today_adv['Total_Advance'].astype(float).sum():,}")
+                # 🟢 BUG FIXED HERE: Indexing by position instead of column names
+                df_today_adv = pd.DataFrame(today_adv)
+                disp_adv = df_today_adv.iloc[:, [2, 3, 5, 6, 8]].copy()
+                disp_adv.columns = ["गाड़ी नंबर", "डीज़ल", "नकद (Cash)", "बैंक", "कुल एडवांस"]
+                
+                st.table(disp_adv)
+                total_adv_sum = pd.to_numeric(disp_adv["कुल एडवांस"], errors='coerce').fillna(0).sum()
+                st.success(f"कुल एडवांस दिया: ₹{int(total_adv_sum):,}")
             else: st.info("आज कोई एडवांस नहीं दिया गया।")
         
         st.write("---")
         st.subheader("🏁 आज किए गए फाइनल हिसाब (Owner Ledger Entries)")
         all_bal = get_sheet_data_for_reports("Owner_Ledger")
         if all_bal:
-            today_bal = [r for r in all_bal[1:] if r[0] == s_date and "POD Link:" not in str(r[4])]
+            today_bal = [r for r in all_bal[1:] if len(r) > 5 and r[0] == s_date and "POD Link:" not in str(r[4])]
             if today_bal:
-                df_today_bal = pd.DataFrame(today_bal, columns=all_bal[0])
-                st.table(df_today_bal[["Trip_ID", "Truck_No", "Description", "Credit_Debit_Amt"]])
+                # 🟢 BUG FIXED HERE: Indexing by position instead of column names
+                df_today_bal = pd.DataFrame(today_bal)
+                disp_bal = df_today_bal.iloc[:, [1, 3, 4, 5]].copy()
+                disp_bal.columns = ["Trip ID", "गाड़ी नंबर", "विवरण", "रकम (₹)"]
+                
+                st.table(disp_bal)
             else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।")
 
-    # --- TAB 5: 🟢 NAYA TAB (GR & POD PRINT) - SUPER FAST SEARCH ---
+    # --- TAB 5: GR & POD PRINT ---
     with tab5:
         st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD कॉपी)")
         st.write("GR नंबर दर्ज करें और एक ही जगह पर GR और POD दोनों की कॉपी पाएँ।")
@@ -206,7 +215,7 @@ def show_reports_page():
             
             if len(all_bk) > 1:
                 for r in all_bk[1:]:
-                    if str(r[8]).strip().lower() == search_gr.strip().lower():
+                    if len(r) > 8 and str(r[8]).strip().lower() == search_gr.strip().lower():
                         found_trip = r
                         break
             
