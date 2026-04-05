@@ -62,7 +62,6 @@ if check_password():
     from reports import show_reports_page
     from pod import show_pod_page  
     from company_hisaab import show_company_page  
-    from payment_correction import show_payment_correction_page # 🟢 पेमेंट सुधार
     from outstanding import show_outstanding_page # 🟢 नया पेज लेना-देना
 
     # --- SIDEBAR ---
@@ -86,8 +85,7 @@ if check_password():
         "रिपोर्ट्स (Reports)",
         "POD और फाइनल हिसाब",
         "🏢 कंपनी खाता",
-        "🛠️ पेमेंट सुधार",              # 🟢 यह बटन वापस जोड़ दिया
-        "💸 लेना - देना (Outstanding)"   # 🟢 नया बटन
+        "💸 लेना - देना (Outstanding)"   # 🟢 नया बटन यहाँ है
     ])
 
     # --- PAGE NAVIGATION ---
@@ -109,7 +107,5 @@ if check_password():
         show_pod_page()
     elif choice == "🏢 कंपनी खाता":
         show_company_page()
-    elif choice == "🛠️ पेमेंट सुधार":
-        show_payment_correction_page()
     elif choice == "💸 लेना - देना (Outstanding)":
         show_outstanding_page()
