@@ -5,10 +5,10 @@ import pandas as pd
 import gspread
 import json
 from oauth2client.service_account import ServiceAccountCredentials
-import requests       
-import base64         
+import requests        
+import base64          
 from PIL import Image 
-import io             
+import io              
 
 # ==========================================
 # ⚠️ Google Apps Script Web App URL
@@ -101,7 +101,6 @@ def update_booking_in_db(trip_id, updated_row):
         ids = sheet.col_values(15) 
         if trip_id in ids:
             row_index = ids.index(trip_id) + 1
-            # 🟢 FIX: गूगल शीट अपडेट का पुराना और सॉलिड फॉर्मूला वापस लगा दिया
             sheet.update(f"A{row_index}:P{row_index}", [updated_row])
             return True
     except: return False
@@ -145,7 +144,6 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
                 new_row_data = [str(date_val), str(trip_id), gr, "N/A", desc, amt]
             
             if row_to_update != -1: 
-                # 🟢 FIX: यहाँ भी पुराना फॉर्मूला वापस लगा दिया है
                 ws.update(f"A{row_to_update}:F{row_to_update}", [new_row_data])
             else: 
                 ws.append_row(new_row_data, table_range="A1")
@@ -165,16 +163,18 @@ def show_booking_page():
         </style>
     """, unsafe_allow_html=True)
 
-    st.header("🚛 बुकिंग (नई गाड़ी / एडिट)")
+    st.header("🚛 बुकिंग (नई गाड़ी / एडिट / बल्क अपलोड)")
     
     if "bk_ck" not in st.session_state: st.session_state.bk_ck = 0
     if "show_confirm" not in st.session_state: st.session_state.show_confirm = False
     if "bk_saving_lock" not in st.session_state: st.session_state.bk_saving_lock = False
     
     c = st.session_state.bk_ck
-    tab1, tab2 = st.tabs(["🆕 नई गाड़ी लगाएँ", "✏️ बुकिंग एडिट करें"])
     
-    # --- TAB 1: NAI BOOKING ---
+    # 🟢 3 Tabs बनाए गए हैं
+    tab1, tab2, tab3 = st.tabs(["🆕 नई गाड़ी लगाएँ (Single)", "✏️ बुकिंग एडिट करें", "📑 एक्सेल से बल्क बुकिंग (Bulk)"])
+    
+    # --- TAB 1: NAI BOOKING (SINGLE) ---
     with tab1:
         if not st.session_state.show_confirm:
             with st.form(key=f"booking_form_{c}"):
@@ -309,7 +309,6 @@ def show_booking_page():
                     if st.form_submit_button("💾 अपडेट करें"):
                         with st.spinner("अपडेट हो रहा है..."):
                             e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
-                            
                             final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
                             
                             updated_row = [
@@ -345,7 +344,7 @@ def show_booking_page():
                             final_bytes, file_ext = prepare_pod_file(gr_files)
                             
                             if final_bytes:
-                                f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}" # GR_Number_TruckNumber
+                                f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
                                 d_id = upload_to_drive(final_bytes, f_name)
                                 
                                 if d_id:
@@ -365,3 +364,109 @@ def show_booking_page():
                         st.error("⚠️ कृपया पहले GR की फोटो चुनें!")
 
         else: st.info("कोई पुरानी बुकिंग नहीं मिली।")
+
+    # --- TAB 3: EXCEL BULK UPLOAD ---
+    with tab3:
+        st.markdown("### 📑 एक्सेल फाइल से एक साथ कई गाड़ियाँ लगाएँ")
+        st.write("नीचे दिए गए बटन से खाली टेम्पलेट (Format) डाउनलोड करें, उसमें अपनी गाड़ियों की जानकारी भरें और फिर यहाँ अपलोड कर दें।")
+        
+        # 1. Template Download Button
+        template_cols = [
+            "Date (YYYY-MM-DD)", "From", "Company", "Owner Rate", "Company Rate",
+            "Weight", "Truck No", "To", "GR No", "Universal Amt", "Comments", "Ishtyaque Profit"
+        ]
+        df_template = pd.DataFrame(columns=template_cols)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_template.to_excel(writer, index=False, sheet_name='BulkBooking')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="⬇️ एक्सेल टेम्पलेट डाउनलोड करें (Format)",
+            data=processed_data,
+            file_name="Khan_Transport_Bulk_Format.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+        
+        st.divider()
+        
+        # 2. File Uploader
+        uploaded_excel = st.file_uploader("📥 अपनी भरी हुई एक्सेल शीट यहाँ अपलोड करें", type=["xlsx", "xls", "csv"])
+        
+        if uploaded_excel is not None:
+            try:
+                if uploaded_excel.name.endswith('.csv'):
+                    df_upload = pd.read_csv(uploaded_excel)
+                else:
+                    df_upload = pd.read_excel(uploaded_excel)
+                
+                st.write("👀 **शीट का प्रीव्यू (Preview):**")
+                st.dataframe(df_upload, use_container_width=True)
+                
+                if st.button("🚀 सभी गाड़ियाँ सेव करें (Save All)", type="primary"):
+                    success_count = 0
+                    error_count = 0
+                    
+                    with st.spinner(f"⏳ कुल {len(df_upload)} गाड़ियाँ सेव हो रही हैं, कृपया रुकें..."):
+                        for index, row in df_upload.iterrows():
+                            try:
+                                # Data Extraction and Cleanup
+                                def clean_num(val):
+                                    try: return float(val) if pd.notna(val) else 0
+                                    except: return 0
+                                
+                                def clean_str(val):
+                                    return str(val).strip() if pd.notna(val) and str(val).lower() != "nan" else ""
+
+                                date_str = clean_str(row.get("Date (YYYY-MM-DD)", str(datetime.date.today())))
+                                if not date_str: date_str = str(datetime.date.today())
+                                
+                                from_loc = clean_str(row.get("From", "Kashipur"))
+                                company = clean_str(row.get("Company", "Other"))
+                                owner_rate = clean_num(row.get("Owner Rate", 0))
+                                comp_rate = clean_num(row.get("Company Rate", 0))
+                                weight = clean_num(row.get("Weight", 0))
+                                truck_no = clean_str(row.get("Truck No", ""))
+                                to_loc = clean_str(row.get("To", ""))
+                                gr_no = clean_str(row.get("GR No", "N/A"))
+                                uni_amt = clean_num(row.get("Universal Amt", 0))
+                                comments = clean_str(row.get("Comments", ""))
+                                ish_amt = clean_num(row.get("Ishtyaque Profit", 0))
+                                
+                                if not truck_no or not to_loc:
+                                    error_count += 1
+                                    continue # Skip empty rows
+                                
+                                # Calculations
+                                comp_freight = int(weight * comp_rate) + int(uni_amt)
+                                owner_freight = int(weight * owner_rate)
+                                final_uni_amt = int(uni_amt * 0.99) if uni_amt > 0 else 0
+                                trip_id = f"TRP-{datetime.datetime.now().strftime('%y%m%d%H%M%S')}{index}" # Appended index to keep unique
+                                
+                                row_data = [
+                                    date_str, from_loc, company, owner_rate, comp_rate, weight,
+                                    truck_no, to_loc, gr_no if gr_no else "N/A", int(uni_amt), comments,
+                                    comp_freight, owner_freight, final_uni_amt, trip_id, int(ish_amt)
+                                ]
+                                
+                                # Save to DB
+                                if save_booking_to_db(row_data):
+                                    save_to_ledgers(date_str, trip_id, gr_no, truck_no, to_loc, comp_freight, owner_freight, final_uni_amt, int(ish_amt))
+                                    success_count += 1
+                                    time.sleep(0.5) # Google API Rate limit protection
+                                else:
+                                    error_count += 1
+                            except Exception as e:
+                                error_count += 1
+                                continue
+                        
+                        st.cache_data.clear()
+                        if success_count > 0:
+                            st.success(f"✅ बहुत बढ़िया! {success_count} गाड़ियाँ सफलतापूर्वक डेटाबेस में सेव हो गई हैं।")
+                        if error_count > 0:
+                            st.warning(f"⚠️ {error_count} लाइनों में कुछ दिक्कत थी (या तो गाड़ी नंबर खाली था)।")
+                        
+            except Exception as e:
+                st.error("❌ एक्सेल फाइल पढ़ने में दिक्कत आई। कृपया पक्का करें कि आपने टेम्पलेट वाला फॉर्मेट ही इस्तेमाल किया है।")
