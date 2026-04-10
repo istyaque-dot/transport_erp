@@ -38,7 +38,15 @@ def get_sheet_data_for_reports(sheet_name):
 def show_reports_page():
     st.header("📑 बिज़नेस रिपोर्ट्स (Khan ERP)")
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🏦 खाता स्टेटमेंट", "Master Report", "🚚 सिंगल गाड़ी हिसाब", "📅 आज का काम", "📄 डॉक्यूमेंट प्रिंट"])
+    # 🟢 नया टैब 'आज की पेमेंट्स' 5वें नंबर पर जोड़ा गया है
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🏦 खाता स्टेटमेंट", 
+        "Master Report", 
+        "🚚 सिंगल गाड़ी हिसाब", 
+        "📅 आज का काम", 
+        "💸 आज की पेमेंट्स", 
+        "📄 डॉक्यूमेंट प्रिंट"
+    ])
 
     # --- TAB 1: Ledger Report ---
     with tab1:
@@ -168,7 +176,7 @@ def show_reports_page():
 
     # --- TAB 4: DAILY WORK SUMMARY ---
     with tab4:
-        st.markdown("### 📅 आज का काम (Payment Summary)")
+        st.markdown("### 📅 आज का काम (Booking & Owner Payments)")
         rep_date = st.date_input("तारीख चुनें:", datetime.date.today(), key="daily_rep_date")
         s_date = rep_date.strftime('%Y-%m-%d')
         
@@ -178,7 +186,6 @@ def show_reports_page():
         if all_adv:
             today_adv = [r for r in all_adv[1:] if len(r) > 8 and r[0] == s_date]
             if today_adv:
-                # 🟢 BUG FIXED HERE: Indexing by position instead of column names
                 df_today_adv = pd.DataFrame(today_adv)
                 disp_adv = df_today_adv.iloc[:, [2, 3, 5, 6, 8]].copy()
                 disp_adv.columns = ["गाड़ी नंबर", "डीज़ल", "नकद (Cash)", "बैंक", "कुल एडवांस"]
@@ -194,7 +201,6 @@ def show_reports_page():
         if all_bal:
             today_bal = [r for r in all_bal[1:] if len(r) > 5 and r[0] == s_date and "POD Link:" not in str(r[4])]
             if today_bal:
-                # 🟢 BUG FIXED HERE: Indexing by position instead of column names
                 df_today_bal = pd.DataFrame(today_bal)
                 disp_bal = df_today_bal.iloc[:, [1, 3, 4, 5]].copy()
                 disp_bal.columns = ["Trip ID", "गाड़ी नंबर", "विवरण", "रकम (₹)"]
@@ -202,8 +208,44 @@ def show_reports_page():
                 st.table(disp_bal)
             else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।")
 
-    # --- TAB 5: GR & POD PRINT ---
+    # --- TAB 5: DAILY PAYMENTS (CASH FLOW / DAYBOOK) ---
     with tab5:
+        st.markdown("### 💸 आज की कुल पेमेंट्स (Cash / Bank Outflow)")
+        st.write("यहाँ से आप किसी भी दिन की कुल पेमेंट्स (खर्चे/लेन-देन) की रिपोर्ट निकाल सकते हैं।")
+        
+        pay_date = st.date_input("पेमेंट की तारीख चुनें:", datetime.date.today(), key="payment_date")
+        s_pay_date = pay_date.strftime('%Y-%m-%d')
+        
+        if st.button("🔄 पेमेंट्स लोड करें", type="primary"):
+            with st.spinner("डेटा निकाला जा रहा है..."):
+                # ⚠️ नोट: यह कोड मान रहा है कि आपकी रोज़ की पेमेंट्स 'Daybook' शीट में जाती हैं।
+                raw_daybook = get_sheet_data_for_reports("Daybook")
+                
+                if raw_daybook:
+                    df = pd.DataFrame(raw_daybook[1:], columns=raw_daybook[0])
+                    date_col = df.columns[0]
+                    
+                    # तारीख के हिसाब से डेटा फिल्टर करना
+                    df_today = df[df[date_col] == s_pay_date]
+                    
+                    if not df_today.empty:
+                        # अमाउंट वाला कॉलम खोजना
+                        amt_col = "Amount" if "Amount" in df.columns else df.columns[-1]
+                        df_today[amt_col] = pd.to_numeric(df_today[amt_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        
+                        # टोटल कैलकुलेट करना
+                        total_payment = df_today[amt_col].sum()
+                        
+                        st.error(f"💸 **{s_pay_date} की कुल पेमेंट्स (टोटल अमाउंट): ₹{total_payment:,.2f}**")
+                        st.write("👀 **पेमेंट्स की पूरी लिस्ट:**")
+                        st.dataframe(df_today, use_container_width=True)
+                    else:
+                        st.info(f"🟢 {s_pay_date} की तारीख में अभी तक कोई पेमेंट एंट्री नहीं हुई है।")
+                else:
+                    st.warning("⚠️ 'Daybook' नाम की शीट नहीं मिली या वह खाली है। अगर आप पेमेंट्स किसी और शीट में सेव करते हैं (जैसे 'Cash_Ledger' या 'Expenses'), तो शीट का नाम बदलें।")
+
+    # --- TAB 6: GR & POD PRINT ---
+    with tab6:
         st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD कॉपी)")
         st.write("GR नंबर दर्ज करें और एक ही जगह पर GR और POD दोनों की कॉपी पाएँ।")
         
