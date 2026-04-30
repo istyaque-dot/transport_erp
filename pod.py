@@ -70,11 +70,21 @@ def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage_amt):
 def get_trip_summary(trip_id):
     try:
         db = connect_to_sheet()
-        bk_data = db.worksheet("Bookings").get_all_records()
-        trip_bk = [r for r in bk_data if str(r['trip number']) == trip_id][0]
+        bk_data = db.worksheet("Bookings").get_all_values()
+        trip_bk = None
+        for r in bk_data[1:]:
+            if len(r) > 14 and str(r[14]).strip() == trip_id:
+                trip_bk = {
+                    'weight': float(str(r[5]).replace(',', '')),
+                    'truck freight': float(str(r[12]).replace(',', ''))
+                }
+                break
+                
         adv_data = db.worksheet("Advances").get_all_values()
-        total_adv = sum([int(float(str(r[8]).replace(',', ''))) for r in adv_data[1:] if str(r[1]).strip() == trip_id])
-        df_owner = pd.DataFrame(db.worksheet("Owner_Ledger").get_all_values())
+        total_adv = sum([int(float(str(r[8]).replace(',', ''))) for r in adv_data[1:] if len(r) > 8 and str(r[1]).strip() == trip_id])
+        
+        df_owner_raw = db.worksheet("Owner_Ledger").get_all_values()
+        df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
         already_adj = 0
         existing_pod_url = None 
         if not df_owner.empty and len(df_owner.columns) > 5:
@@ -87,7 +97,8 @@ def get_trip_summary(trip_id):
                 elif "POD Link:" in desc:
                     existing_pod_url = desc.replace("POD Link:", "").strip()
         return trip_bk, total_adv, already_adj, existing_pod_url
-    except: return None, 0, 0, None
+    except Exception as e: 
+        return None, 0, 0, None
 
 def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank_name, remark):
     try:
@@ -103,19 +114,38 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
     except: return False
 
 # ==========================================
-# 🖥️ USER INTERFACE (यह वह फंक्शन है जो मिसिंग था)
+# 🖥️ USER INTERFACE
 # ==========================================
 def show_pod_page():
     st.header("🏁 POD और फाइनल हिसाब (Settlement)")
     db = connect_to_sheet()
     df_owner_raw = db.worksheet("Owner_Ledger").get_all_values()
-    df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
     
-    if not df_owner.empty:
-        df_clean = df_owner[~df_owner.iloc[:, 4].str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].tail(50).iloc[::-1]
-        choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_clean.iterrows()]
+    if len(df_owner_raw) > 1:
+        df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
+        # 🟢 पुरानी और फाइनल हो चुकी गाड़ियों को लिस्ट से हटाना
+        df_pending = df_owner[~df_owner.iloc[:, 4].astype(str).str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].iloc[::-1]
         
-        selected = st.selectbox("🔍 गाड़ी चुनें जिसका हिसाब फाइनल करना है या POD अपलोड करनी है", ["चुनें..."] + choices)
+        st.write("---")
+        
+        # 🟢 स्मार्ट GR सर्च सिस्टम
+        col_s1, col_s2 = st.columns([1, 2])
+        with col_s1:
+            search_gr = st.text_input("🔍 GR नंबर से खोजें (पुरानी गाड़ी के लिए):")
+            
+        if search_gr:
+            # अगर GR टाइप किया है, तो सिर्फ उसी GR की गाड़ी खोजेगा
+            df_show = df_pending[df_pending.iloc[:, 2].astype(str).str.contains(search_gr.strip(), case=False, na=False)]
+        else:
+            # 🟢 LIMIT HATA DI GAYI HAI - अब सारी पेंडिंग गाड़ियाँ दिखेंगी
+            df_show = df_pending
+            
+        choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_show.iterrows()]
+        
+        with col_s2:
+            selected = st.selectbox("📝 नीचे लिस्ट से गाड़ी चुनें", ["चुनें..."] + choices)
+        
+        st.write("---")
         
         if selected != "चुनें...":
             parts = selected.split(" | ")
@@ -158,12 +188,12 @@ def show_pod_page():
                                     f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
                                     if d_id:
-                                        pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                        pod_url = d_id if "http" in d_id else f"https://drive.google.com/file/d/{d_id}/view"
                                         db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                         st.cache_data.clear()
                                         st.success("✅ सारी फोटो जुड़कर एक PDF बन गई और सुरक्षित सेव हो गई!")
                                         time.sleep(2); st.rerun()
-                                    else: st.error("❌ अपलोड फेल हो गया!")
+                                    else: st.error("❌ अपलोड फेल हो गया! (Google Web App Error)")
                                 else: st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
                         else: st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
                 else:
@@ -181,7 +211,7 @@ def show_pod_page():
                                     f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
                                     if d_id:
-                                        pod_url = f"https://drive.google.com/file/d/{d_id}/view"
+                                        pod_url = d_id if "http" in d_id else f"https://drive.google.com/file/d/{d_id}/view"
                                         db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                         st.cache_data.clear()
                                         st.success("✅ बिल्टी (POD) सुरक्षित सेव हो गई!")
