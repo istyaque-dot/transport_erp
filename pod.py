@@ -124,50 +124,43 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
 # 🖥️ USER INTERFACE
 # ==========================================
 def show_pod_page():
-    # 🟢 PERFECTLY BALANCED CSS FOR 11-INCH MAC
+    # 🟢 CSS ADJUSTMENT (सिर्फ टॉप पैडिंग बढ़ाई गई है ताकि हेडिंग न कटे)
     st.markdown("""
         <style>
-            /* ऊपर थोड़ी जगह बढ़ा दी, ताकि हेडिंग न चिपके */
-            .block-container { padding-top: 1.35rem !important; padding-bottom: 1rem !important; max-width: 98% !important; }
-            h2 { font-size: 1.35rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
-            h3 { font-size: 1.05rem !important; margin-top: 2px !important; margin-bottom: 0px !important; padding-bottom: 0px !important;}
-            h4 { font-size: 0.95rem !important; margin-top: 0px !important; margin-bottom: 4px !important; color: #003399; }
+            /* टॉप पैडिंग को 2rem कर दिया ताकि हेडिंग स्ट्रीमलिट के बार के नीचे न छुपे */
+            .block-container { padding-top: 2.2rem !important; padding-bottom: 0.1rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.25rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1rem !important; margin-top: 2px !important; margin-bottom: 0px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 0.95rem !important; margin-top: 0px !important; margin-bottom: 2px !important; color: #003399; }
             
-            /* बीच का गैप हल्का सा (Minor) कम किया */
-            div[data-testid="stVerticalBlock"] { gap: 0.4rem !important; } 
-            div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
+            /* नीचे का सारा टाइट लेआउट बिल्कुल वैसा ही रखा गया है */
+            div[data-testid="stVerticalBlock"] { gap: 0.2rem !important; } 
+            div[data-testid="stHorizontalBlock"] { gap: 0.3rem !important; }
             
-            /* इनपुट फील्ड्स स्लिम हैं */
             .stTextInput > div > div > input, 
             .stNumberInput > div > div > input, 
             .stSelectbox > div > div > select { 
-                padding-top: 2px !important; padding-bottom: 2px !important; min-height: 1.8rem !important; font-size: 0.85rem !important;
+                padding-top: 0px !important; padding-bottom: 0px !important; min-height: 1.6rem !important; font-size: 0.85rem !important;
             }
             
-            label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: 0px !important; padding-bottom: 0px !important; }
+            label { font-size: 0.75rem !important; font-weight: 600 !important; margin-bottom: 0px !important; padding-bottom: 0px !important; }
+            div[data-testid="stAlert"] { padding: 2px 8px !important; min-height: 24px !important; margin-top: 0px !important; margin-bottom: 0px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.8rem !important; margin: 0px !important; }
             
-            /* अलर्ट बॉक्स (पीला वाला) के ऊपर-नीचे का गैप सेट किया */
-            div[data-testid="stAlert"] { padding: 4px 10px !important; min-height: 30px !important; margin-top: 0.2rem !important; margin-bottom: 0.2rem !important;}
-            div[data-testid="stAlert"] p { font-size: 0.85rem !important; margin: 0px !important; }
-            
-            /* पासबुक के डब्बे */
             div[data-testid="metric-container"] {
                 background-color: transparent !important; border: none !important; box-shadow: none !important; padding: 0px 5px !important; margin-bottom: 0px !important;
             }
-            div[data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+            div[data-testid="stMetricValue"] { font-size: 1rem !important; }
             div[data-testid="stMetricLabel"] { font-weight: bold !important; color: #333 !important;}
             
-            /* लाइनों का मार्जिन सेट किया */
-            hr { margin: 0.4em 0px !important; border-color: #ddd !important; }
-            .stButton > button { min-height: 1.8rem !important; padding: 2px 10px !important; font-size: 0.9rem !important;}
+            hr { margin: 0.1em 0px !important; border-color: #ddd !important; }
+            .stButton > button { min-height: 1.6rem !important; padding: 0px 8px !important; font-size: 0.85rem !important;}
             
-            /* कस्टम बॉक्स की पैडिंग थोड़ी बढ़ा दी ताकि भरा-भरा लगे */
             .custom-box {
-                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; height: 100%; margin-top: 0px;
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; height: 100%; margin-top: 0px;
             }
             
-            /* फाइल अपलोडर से फालतू टेक्स्ट हटाया */
-            .stFileUploader section { padding: 6px !important; min-height: auto !important; }
+            .stFileUploader section { padding: 4px !important; min-height: auto !important; }
             .stFileUploader label { display: none !important; }
             .stFileUploader small { display: none !important; } 
         </style>
@@ -183,7 +176,6 @@ def show_pod_page():
         
         st.markdown("<hr>", unsafe_allow_html=True)
         
-        # 🟢 स्मार्ट GR सर्च
         col_s1, col_s2 = st.columns([1, 2.5])
         with col_s1:
             search_gr = st.text_input("🔍 GR नंबर से खोजें:")
