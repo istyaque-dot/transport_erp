@@ -734,4 +734,4 @@ def show_booking_page():
                         st.warning(f"⚠️ {error_count} rows skip हुईं (गाड़ी नंबर या Destination खाली था)।")
 
             except Exception as e:
-                st.error(f"❌ Excel फाइल पढ़ने में दिक्कत: {e}") ye booking.py ka purna code hai
+                st.error(f"❌ Excel फाइल पढ़ने में दिक्कत: {e}") 
