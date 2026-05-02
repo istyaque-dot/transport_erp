@@ -155,45 +155,44 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # ==========================================
 
 def show_booking_page():
-    # 🟢 ZERO BLANK SPACE CSS (For 11-inch Mac)
+    # 🟢 BALANCED COMPACT CSS (For 11-inch Mac)
     st.markdown("""
         <style>
-            /* मेन कंटेनर की पैडिंग हटाना */
-            .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; max-width: 98% !important; }
-            h2 { font-size: 1.3rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
-            h3 { font-size: 1rem !important; margin-bottom: 0px !important; padding-bottom: 0px !important;}
-            h4 { font-size: 0.95rem !important; margin-bottom: 0px !important; color: #003399; }
+            /* मेन कंटेनर की पैडिंग को संतुलित किया */
+            .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.4rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1.1rem !important; margin-bottom: 5px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 1.05rem !important; margin-bottom: 8px !important; color: #003399; }
             
-            /* फॉर्म के अंदर की स्पेसिंग और लाइनों के बीच का गैप खत्म करना */
-            div[data-testid="stForm"] { padding: 15px !important; margin-bottom: 5px !important; }
-            div[data-testid="stVerticalBlock"] { gap: 0rem !important; } /* एकदम सटाने के लिए */
-            div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
+            /* फॉर्म के अंदर की स्पेसिंग थोड़ी बढ़ाई ताकि चिपका हुआ न लगे */
+            div[data-testid="stForm"] { padding: 20px !important; margin-bottom: 10px !important; }
+            div[data-testid="stVerticalBlock"] { gap: 0.8rem !important; } /* लाइनों के बीच सांस लेने की जगह */
+            div[data-testid="stHorizontalBlock"] { gap: 0.8rem !important; }
             
-            /* इनपुट बॉक्स को स्लिम करना */
+            /* इनपुट बॉक्स को थोड़ा खुला और साफ बनाया */
             .stTextInput > div > div > input, 
             .stNumberInput > div > div > input, 
             .stSelectbox > div > div > select { 
-                padding-top: 0px !important; 
-                padding-bottom: 0px !important; 
-                min-height: 1.8rem !important; 
-                font-size: 0.85rem !important;
+                padding-top: 4px !important; 
+                padding-bottom: 4px !important; 
+                min-height: 2.2rem !important; 
+                font-size: 0.9rem !important;
             }
             
-            /* लेबल्स (Label) और बॉक्स के बीच की जगह खत्म करना */
-            label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: -5px !important; padding-bottom: 0px !important; }
+            /* लेबल्स (Label) और बॉक्स के बीच का गैप ठीक किया */
+            label { font-size: 0.85rem !important; font-weight: 600 !important; margin-bottom: 2px !important; padding-bottom: 0px !important; }
             
-            /* अलर्ट और सक्सेस मैसेज बॉक्स को छोटा करना */
-            div[data-testid="stAlert"] { padding: 5px 10px !important; min-height: 30px !important; margin-top: 5px !important; margin-bottom: 5px !important;}
-            div[data-testid="stAlert"] p { font-size: 0.85rem !important; margin: 0px !important; }
+            /* अलर्ट और सक्सेस मैसेज बॉक्स */
+            div[data-testid="stAlert"] { padding: 8px 12px !important; min-height: 35px !important; margin-top: 8px !important; margin-bottom: 8px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.9rem !important; margin: 0px !important; }
             
-            hr { margin: 0.3em 0px !important; }
+            hr { margin: 0.8em 0px !important; }
             
-            /* GR अपलोड बॉक्स का कॉम्पैक्ट डिज़ाइन */
+            /* GR अपलोड बॉक्स का बैलेंस डिज़ाइन */
             .gr-box {
-                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; height: 100%; margin-top: 0px;
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; height: 100%; margin-top: 0px;
             }
-            .stButton > button { min-height: 2rem !important; padding: 0px 10px !important; }
-            .stFileUploader { margin-bottom: -10px !important; }
+            .stButton > button { min-height: 2.2rem !important; padding: 2px 10px !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -313,7 +312,6 @@ def show_booking_page():
                 selected_trip_id = trip_ids[idx]
                 row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
                 
-                # 🟢 आमने-सामने (Side-by-Side) लेआउट, gap='small' कर दिया गया है
                 col_edit, col_gr = st.columns([2.2, 1], gap="small")
                 
                 # ------ LEFT SIDE: EDIT FORM ------
@@ -387,7 +385,7 @@ def show_booking_page():
                     
                     if st.button("🚀 फाइल अपलोड करें", type="primary", use_container_width=True):
                         if gr_files:
-                            with st.spinner("GR सेव हो रही है..."):
+                            with st.spinner("GR सेव हो रही..."):
                                 final_bytes, file_ext = prepare_pod_file(gr_files)
                                 if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
