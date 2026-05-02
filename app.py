@@ -1,7 +1,7 @@
 import streamlit as st
 import datetime
 
-st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="Transport ERP", page_icon="", layout="wide")
 
 # ==========================================
 # 🎨 GLOBAL CSS
