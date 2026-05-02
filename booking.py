@@ -140,7 +140,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest,
     except: return False
 
 # ==========================================
-# 🎨 CSS
+# 🎨 CSS (MICRO-ADJUSTMENTS APPLIED)
 # ==========================================
 
 BOOKING_CSS = """
@@ -160,7 +160,7 @@ BOOKING_CSS = """
     }
     .stTabs [data-baseweb="tab"] {
         border-radius: 8px !important;
-        padding: 6px 18px !important;
+        padding: 4px 16px !important;
         font-weight: 600 !important;
         font-size: 0.88rem !important;
         color: #444 !important;
@@ -175,26 +175,26 @@ BOOKING_CSS = """
         background: #ffffff !important;
         border: 1px solid #e2e8f0 !important;
         border-radius: 12px !important;
-        padding: 20px 24px !important;
+        padding: 16px 20px !important; /* Halka sa kam kiya */
         box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
     }
 
     /* Headings */
-    h2 { font-size: 1.4rem !important; margin-bottom: 4px !important; color: #111 !important; }
-    h3 { font-size: 1.1rem !important; margin-bottom: 6px !important; color: #222 !important; }
-    h4 { font-size: 1rem !important; margin-bottom: 6px !important; color: #003399 !important; }
+    h2 { font-size: 1.4rem !important; margin-bottom: 2px !important; color: #111 !important; }
+    h3 { font-size: 1.1rem !important; margin-bottom: 4px !important; color: #222 !important; }
+    h4 { font-size: 1rem !important; margin-bottom: 4px !important; color: #003399 !important; }
 
     /* Spacing */
-    div[data-testid="stVerticalBlock"] { gap: 0.6rem !important; }
-    div[data-testid="stHorizontalBlock"] { gap: 0.7rem !important; }
+    div[data-testid="stVerticalBlock"] { gap: 0.45rem !important; } /* Mamuli sa kam kiya */
+    div[data-testid="stHorizontalBlock"] { gap: 0.55rem !important; }
 
     /* Inputs */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input {
         border-radius: 7px !important;
         border: 1px solid #cbd5e1 !important;
-        padding: 5px 10px !important;
-        min-height: 2.1rem !important;
+        padding: 4px 10px !important;
+        min-height: 1.9rem !important; /* Halka sa dabaya */
         font-size: 0.88rem !important;
         background: #fafafa !important;
     }
@@ -207,7 +207,7 @@ BOOKING_CSS = """
     .stSelectbox > div > div {
         border-radius: 7px !important;
         border: 1px solid #cbd5e1 !important;
-        min-height: 2.1rem !important;
+        min-height: 1.9rem !important; /* Halka sa dabaya */
         font-size: 0.88rem !important;
     }
 
@@ -216,16 +216,16 @@ BOOKING_CSS = """
         font-size: 0.8rem !important;
         font-weight: 700 !important;
         color: #374151 !important;
-        margin-bottom: 2px !important;
+        margin-bottom: 0px !important; /* Chipkaya thoda */
     }
 
     /* Buttons */
     .stButton > button {
         border-radius: 8px !important;
-        min-height: 2.1rem !important;
+        min-height: 1.9rem !important; /* Halka sa dabaya */
         font-size: 0.88rem !important;
         font-weight: 600 !important;
-        padding: 4px 14px !important;
+        padding: 2px 14px !important;
         transition: all 0.15s ease !important;
     }
     .stButton > button[kind="primary"] {
@@ -241,8 +241,8 @@ BOOKING_CSS = """
     /* Alert boxes */
     div[data-testid="stAlert"] {
         border-radius: 8px !important;
-        padding: 8px 14px !important;
-        margin: 4px 0 !important;
+        padding: 6px 12px !important;
+        margin: 2px 0 !important;
     }
     div[data-testid="stAlert"] p { font-size: 0.88rem !important; margin: 0 !important; }
 
@@ -251,7 +251,7 @@ BOOKING_CSS = """
         background: linear-gradient(135deg, #f0f4ff, #e8eeff) !important;
         border: 1px solid #c7d4f5 !important;
         border-radius: 10px !important;
-        padding: 10px 14px !important;
+        padding: 8px 12px !important;
     }
     div[data-testid="stMetricValue"] {
         font-size: 1.15rem !important;
@@ -269,7 +269,7 @@ BOOKING_CSS = """
         background: #f8faff;
         border: 1px solid #c7d4f5;
         border-radius: 10px;
-        padding: 16px;
+        padding: 14px;
         height: 100%;
     }
 
@@ -277,11 +277,11 @@ BOOKING_CSS = """
     .summary-bar {
         background: linear-gradient(135deg, #003399, #0055cc);
         border-radius: 10px;
-        padding: 12px 20px;
+        padding: 10px 18px;
         color: white;
         font-size: 0.9rem;
         font-weight: 600;
-        margin: 8px 0;
+        margin: 6px 0;
     }
     .summary-bar span { margin-right: 28px; }
 
@@ -290,13 +290,13 @@ BOOKING_CSS = """
         background: #fffbeb;
         border: 1.5px solid #f59e0b;
         border-radius: 10px;
-        padding: 14px 18px;
-        margin-bottom: 10px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
     }
 
-    hr { margin: 0.6em 0 !important; border-color: #e2e8f0 !important; }
+    hr { margin: 0.4em 0 !important; border-color: #e2e8f0 !important; }
 
-    .stFileUploader section { padding: 6px !important; }
+    .stFileUploader section { padding: 4px !important; }
     .stFileUploader label { display: none !important; }
     .stFileUploader small { display: none !important; }
     .stDateInput > div > div > input { border-radius: 7px !important; font-size: 0.88rem !important; }
@@ -503,7 +503,7 @@ def show_booking_page():
 
                         e10, e11, e12 = st.columns(3)
                         with e10: e_ish_amt  = st.number_input("👤 Ishtyaque (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
-                        with e11: e_gr       = st.text_input("📄 GR Number",       current_gr)
+                        with e11: e_gr       = st.text_input("📄 GR Number",        current_gr)
                         with e12: e_comments = st.text_input("💬 टिप्पणी",        s_str(row_data.iloc[10]))
 
                         e_comp_freight  = int(e_weight * e_comp_rate) + e_uni_amt
