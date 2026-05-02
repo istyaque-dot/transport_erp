@@ -1,19 +1,7 @@
 import streamlit as st
 import datetime
-from supabase import create_client, Client
 
-# ==========================================
-# 🚀 SUPABASE CONFIG (V2)
-# ==========================================
-SUPABASE_URL = "https://tsyghmvqrlxwicipkvqw.supabase.co"
-SUPABASE_KEY = "sb_publishable_p0_eR7aMIL5KDvUkiwm18g_t1OtXBDv"
-
-@st.cache_resource
-def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-supabase: Client = init_supabase()
-
+# ऐप कॉन्फ़िगरेशन
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
 # ==========================================
@@ -67,7 +55,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔒 LOGIN
+# 🔒 LOGIN SYSTEM
 # ==========================================
 def check_password():
     def password_entered():
@@ -99,17 +87,21 @@ def check_password():
 # 🖥️ MAIN APP
 # ==========================================
 if check_password():
-    # Import Pages
-    from booking        import show_booking_page
-    from advance        import show_advance_page
-    from receivable     import show_receivable_page
-    from daybook        import show_daybook_page
-    from dashboard      import show_dashboard_page
-    from transfer       import show_transfer_page
-    from reports        import show_reports_page
-    from pod            import show_pod_page
-    from company_hisaab import show_company_page
-    from outstanding    import show_outstanding_page
+    # पक्का करें कि इन फाइलों के नाम GitHub पर बिल्कुल यही हैं
+    try:
+        from booking        import show_booking_page
+        from advance        import show_advance_page
+        from receivable     import show_receivable_page
+        from daybook        import show_daybook_page
+        from dashboard      import show_dashboard_page
+        from transfer       import show_transfer_page
+        from reports        import show_reports_page
+        from pod            import show_pod_page
+        from company_hisaab import show_company_page
+        from outstanding    import show_outstanding_page
+    except ImportError as e:
+        st.error(f"❌ फाइल इम्पोर्ट करने में गलती: {e}")
+        st.stop()
 
     # ── Sidebar ──
     st.sidebar.markdown("<div style='text-align:center; padding: 12px 0;'><div style='font-size:1.8rem;'>🚛</div><div style='font-size:1rem; font-weight:900; color:white;'>Transport ERP</div></div>", unsafe_allow_html=True)
@@ -125,17 +117,17 @@ if check_password():
         "🏠 होम (Home)", "बुकिंग", "एडवांस", "रिसिवेबल (पार्टी पेमेंट)", 
         "डे बुक (Credit/Debit)", "ट्रांसफर / पेमेंट (Contra)", 
         "रिपोर्ट्स (Reports)", "POD और फाइनल हिसाब", "🏢 कंपनी खाता", 
-        "💸 लेना - देना (Outstanding)", "📊 डैशबोर्ड", "🛠️ Admin: Data Migration"
+        "💸 लेना - देना (Outstanding)", "📊 डैशबोर्ड"
     ]
     choice = st.sidebar.radio("मेन्यू", PAGES, label_visibility="collapsed")
 
     # Routing
     if choice == "🏠 होम (Home)":
         st.markdown("<div style='text-align:center; padding-top:8vh;'><div style='font-size:4rem;'>🚛</div><h1 style='color:#003399;'>BAZPUR UP TRANSPORT</h1><p>सुरक्षित · तेज़ · भरोसेमंद</p></div>", unsafe_allow_html=True)
-        # Dashboard like cards
+        # Status Cards
         c1, c2, c3 = st.columns(3)
-        c1.metric("Status", "Online", "Supabase V2")
-        c2.metric("Database", "PostgreSQL", "Connected")
+        c1.metric("Status", "Online", "Live Mode")
+        c2.metric("Database", "Google Sheets", "Connected")
         c3.metric("System", "Fast Engine", "Active")
 
     elif choice == "बुकिंग":
@@ -158,11 +150,3 @@ if check_password():
         show_outstanding_page()
     elif choice == "📊 डैशबोर्ड":
         show_dashboard_page()
-    
-    # 🚨 Data Migration Tool (For future or missing sheets)
-    elif choice == "🛠️ Admin: Data Migration":
-        st.header("🚀 Google Sheets ➡️ Supabase Migration")
-        st.info("यह टूल पुराने डेटा को नए डेटाबेस में डालने के लिए है।")
-        if st.button("🔥 माइग्रेशन शुरू करें"):
-            # Yahan migration logic trigger kar sakte hain agar koi sheet bachi ho
-            st.write("माइग्रेशन प्रोसेस शुरू...")
