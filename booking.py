@@ -162,6 +162,7 @@ def show_booking_page():
             .block-container { padding-top: 1rem; padding-bottom: 1rem; }
             h2 { font-size: 1.4rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
             h3 { font-size: 1.1rem !important; margin-bottom: 5px !important; }
+            h4 { font-size: 1rem !important; margin-bottom: 2px !important; color: #003399; }
             
             /* फॉर्म के अंदर की स्पेसिंग और फॉन्ट साइज कम करना */
             div[data-testid="stForm"] > div > div { gap: 0.2rem !important; }
@@ -181,6 +182,11 @@ def show_booking_page():
             }
             div[data-testid="stMetricValue"] { font-size: 1.2rem !important; }
             hr { margin: 0.5em 0px !important; }
+            
+            /* GR अपलोड बॉक्स का डिज़ाइन */
+            .gr-box {
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; height: 100%;
+            }
         </style>
     """, unsafe_allow_html=True)
 
@@ -198,7 +204,6 @@ def show_booking_page():
     with tab1:
         if not st.session_state.show_confirm:
             with st.form(key=f"booking_form_{c}"):
-                # 🟢 4-कॉलम ग्रिड (ताकि सब कुछ 3 लाइनों में सिमट जाए)
                 r1c1, r1c2, r1c3, r1c4 = st.columns(4)
                 with r1c1: b_date = st.date_input("तारीख", datetime.date.today())
                 with r1c2: truck_no = st.text_input("गाड़ी नंबर")
@@ -217,14 +222,12 @@ def show_booking_page():
                 with r3c3: gr_no = st.text_input("GR Number (Optional)")
                 with r3c4: comments = st.text_input("टिप्पणी")
                 
-                # Calculations
                 comp_freight = int(weight * comp_rate) + universal_amt 
                 owner_freight = int(weight * owner_rate)
                 tds = int(comp_freight * 0.01)
                 hold_10 = int(comp_freight * 0.10)
                 advance_approx = int(owner_freight * 0.90)
                 
-                # 🟢 लाइव कैलकुलेशन के लिए सुंदर कार्ड्स
                 st.markdown("---")
                 mc1, mc2, mc3, mc4 = st.columns(4)
                 mc1.metric("कुल भाड़ा", f"₹{comp_freight:,}")
@@ -283,7 +286,7 @@ def show_booking_page():
                 st.session_state.show_confirm = False
                 st.rerun()
 
-    # --- TAB 2: EDIT BOOKING ---
+    # --- TAB 2: EDIT BOOKING (SIDE-BY-SIDE LAYOUT) ---
     with tab2:
         st.markdown("### ✏️ पुरानी बुकिंग में सुधार")
         df_trips = get_all_trips()
@@ -298,83 +301,90 @@ def show_booking_page():
                 except: pass
             
             selected_label = st.selectbox("एडिट करने के लिए गाड़ी चुनें:", ["चुनें..."] + labels)
+            st.divider()
+            
             if selected_label != "चुनें...":
                 idx = labels.index(selected_label)
                 selected_trip_id = trip_ids[idx]
                 row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
                 
-                with st.form("edit_booking_form"):
-                    def s_int(val):
-                        try: return int(float(val))
-                        except: return 0
+                # 🟢 आमने-सामने (Side-by-Side) लेआउट
+                # col_edit (70% width), col_gr (30% width)
+                col_edit, col_gr = st.columns([2.2, 1], gap="large")
+                
+                # ------ LEFT SIDE: EDIT FORM ------
+                with col_edit:
+                    st.markdown("#### 📝 बुकिंग अपडेट फॉर्म")
+                    with st.form("edit_booking_form"):
+                        def s_int(val):
+                            try: return int(float(val))
+                            except: return 0
 
-                    def s_str(val):
-                        return str(val) if pd.notna(val) and str(val).lower() != "nan" else ""
+                        def s_str(val):
+                            return str(val) if pd.notna(val) and str(val).lower() != "nan" else ""
 
-                    current_gr = s_str(row_data.iloc[8])
-                    if current_gr == "N/A": current_gr = ""
+                        current_gr = s_str(row_data.iloc[8])
+                        if current_gr == "N/A": current_gr = ""
 
-                    # 🟢 Edit फॉर्म को भी 4-कॉलम ग्रिड में सेट किया गया
-                    e1, e2, e3, e4 = st.columns(4)
-                    with e1: e_date = st.text_input("तारीख", s_str(row_data.iloc[0]))
-                    with e2: e_truck = st.text_input("गाड़ी नंबर", s_str(row_data.iloc[6]))
-                    with e3: e_from = st.text_input("कहाँ से", s_str(row_data.iloc[1]))
-                    with e4: e_to = st.text_input("कहाँ तक", s_str(row_data.iloc[7]))
+                        # 3-कॉलम का ग्रिड ताकि फॉर्म छोटा रहे
+                        e1, e2, e3 = st.columns(3)
+                        with e1: e_date = st.text_input("तारीख", s_str(row_data.iloc[0]))
+                        with e2: e_truck = st.text_input("गाड़ी नंबर", s_str(row_data.iloc[6]))
+                        with e3: e_from = st.text_input("कहाँ से", s_str(row_data.iloc[1]))
 
-                    e5, e6, e7, e8 = st.columns(4)
-                    with e5: e_company = st.selectbox("कंपनी", ["Universal Industries", "Other"], index=0 if str(row_data.iloc[2]) == "Universal Industries" else 1)
-                    with e6: e_weight = st.number_input("माल का वज़न", value=s_int(row_data.iloc[5]), step=1)
-                    with e7: e_comp_rate = st.number_input("कंपनी रेट", value=s_int(row_data.iloc[4]), step=1) 
-                    with e8: e_owner_rate = st.number_input("गाड़ी वाला रेट", value=s_int(row_data.iloc[3]), step=1) 
+                        e4, e5, e6 = st.columns(3)
+                        with e4: e_to = st.text_input("कहाँ तक", s_str(row_data.iloc[7]))
+                        with e5: e_company = st.selectbox("कंपनी", ["Universal Industries", "Other"], index=0 if str(row_data.iloc[2]) == "Universal Industries" else 1)
+                        with e6: e_weight = st.number_input("माल का वज़न", value=s_int(row_data.iloc[5]), step=1)
 
-                    e9, e10, e11, e12 = st.columns(4)
-                    with e9: e_uni_amt = st.number_input("Universal (₹)", value=s_int(row_data.iloc[9]), step=10)
-                    with e10: e_ish_amt = st.number_input("Ishtyaque (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
-                    with e11: e_gr = st.text_input("GR Number", current_gr)
-                    with e12: e_comments = st.text_input("टिप्पणी", s_str(row_data.iloc[10]))
-                        
-                    e_comp_freight = int(e_weight * e_comp_rate) + e_uni_amt
-                    e_owner_freight = int(e_weight * e_owner_rate)
-                    
-                    st.info(f"🔄 **अपडेटेड कुल भाड़ा:** ₹{e_comp_freight:,}")
-                    
-                    if st.form_submit_button("💾 अपडेट करें", use_container_width=True):
-                        with st.spinner("अपडेट हो रहा है..."):
-                            e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
-                            final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
+                        e7, e8, e9 = st.columns(3)
+                        with e7: e_comp_rate = st.number_input("कंपनी रेट", value=s_int(row_data.iloc[4]), step=1) 
+                        with e8: e_owner_rate = st.number_input("गाड़ी वाला रेट", value=s_int(row_data.iloc[3]), step=1) 
+                        with e9: e_uni_amt = st.number_input("Universal (₹)", value=s_int(row_data.iloc[9]), step=10)
+
+                        e10, e11, e12 = st.columns(3)
+                        with e10: e_ish_amt = st.number_input("Ishtyaque (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
+                        with e11: e_gr = st.text_input("GR Number", current_gr)
+                        with e12: e_comments = st.text_input("टिप्पणी", s_str(row_data.iloc[10]))
                             
-                            updated_row = [
-                                str(e_date), str(e_from), str(e_company), e_owner_rate, e_comp_rate, e_weight,
-                                str(e_truck), str(e_to), final_gr, e_uni_amt, str(e_comments),
-                                e_comp_freight, e_owner_freight, e_final_uni, selected_trip_id, e_ish_amt
-                            ]
-                            if update_booking_in_db(selected_trip_id, updated_row):
-                                update_ledgers(e_date, selected_trip_id, final_gr, e_truck, e_to, e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt)
-                                st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
-                                time.sleep(1.5)
-                                st.rerun()
-                            else: st.error("❌ अपडेट फेल हो गया।")
+                        e_comp_freight = int(e_weight * e_comp_rate) + e_uni_amt
+                        e_owner_freight = int(e_weight * e_owner_rate)
+                        
+                        st.info(f"🔄 **अपडेटेड कुल भाड़ा:** ₹{e_comp_freight:,}")
+                        
+                        if st.form_submit_button("💾 अपडेट करें", use_container_width=True):
+                            with st.spinner("अपडेट हो रहा है..."):
+                                e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
+                                final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
+                                
+                                updated_row = [
+                                    str(e_date), str(e_from), str(e_company), e_owner_rate, e_comp_rate, e_weight,
+                                    str(e_truck), str(e_to), final_gr, e_uni_amt, str(e_comments),
+                                    e_comp_freight, e_owner_freight, e_final_uni, selected_trip_id, e_ish_amt
+                                ]
+                                if update_booking_in_db(selected_trip_id, updated_row):
+                                    update_ledgers(e_date, selected_trip_id, final_gr, e_truck, e_to, e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt)
+                                    st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                else: st.error("❌ अपडेट फेल हो गया।")
 
-                # ==========================================
-                # 🟢 GR (BILTY) UPLOAD SECTION
-                # ==========================================
-                st.divider()
-                st.markdown("#### 📄 GR (बिल्टी) कॉपी अपलोड")
-                
-                existing_gr_url = ""
-                if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
-                    existing_gr_url = str(row_data.iloc[16])
-                    st.success("✅ इस गाड़ी की GR कॉपी सिस्टम में पहले से सुरक्षित है।")
-                    st.link_button("📥 सेव की गई GR कॉपी देखें", existing_gr_url, type="secondary")
-                
-                gr_c1, gr_c2 = st.columns([3, 1])
-                with gr_c1:
-                    gr_files = st.file_uploader("GR के पेज चुनें (PDF/JPG)", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key=f"gr_up_{selected_trip_id}")
-                with gr_c2:
-                    st.markdown("<br>", unsafe_allow_html=True) # अलाइनमेंट के लिए
-                    if st.button("🚀 अपलोड", type="primary", use_container_width=True):
+                # ------ RIGHT SIDE: GR UPLOAD ------
+                with col_gr:
+                    st.markdown("<div class='gr-box'>", unsafe_allow_html=True)
+                    st.markdown("#### 📄 GR (बिल्टी) अपलोड")
+                    
+                    existing_gr_url = ""
+                    if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
+                        existing_gr_url = str(row_data.iloc[16])
+                        st.success("✅ GR सुरक्षित है।")
+                        st.link_button("📥 GR कॉपी देखें", existing_gr_url, type="secondary", use_container_width=True)
+                    
+                    gr_files = st.file_uploader("GR की फोटो (PDF/JPG)", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key=f"gr_up_{selected_trip_id}")
+                    
+                    if st.button("🚀 फाइल अपलोड करें", type="primary", use_container_width=True):
                         if gr_files:
-                            with st.spinner("GR की PDF सेव हो रही है..."):
+                            with st.spinner("GR सेव हो रही है..."):
                                 final_bytes, file_ext = prepare_pod_file(gr_files)
                                 if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
@@ -383,13 +393,14 @@ def show_booking_page():
                                         gr_url = f"https://drive.google.com/file/d/{d_id}/view"
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
                                             st.cache_data.clear()
-                                            st.success("✅ GR सुरक्षित सेव हो गई!")
+                                            st.success("✅ सेव हो गई!")
                                             time.sleep(2)
                                             st.rerun()
-                                        else: st.error("❌ Link सेव नहीं हो पाया!")
-                                    else: st.error("❌ Drive पर अपलोड फेल हो गया!")
-                                else: st.error("❌ फोटो प्रोसेस करने में दिक्कत आई।")
+                                        else: st.error("❌ Link फेल!")
+                                    else: st.error("❌ Drive फेल!")
+                                else: st.error("❌ प्रोसेस दिक्कत।")
                         else: st.error("⚠️ पहले फोटो चुनें!")
+                    st.markdown("</div>", unsafe_allow_html=True)
 
         else: st.info("कोई पुरानी बुकिंग नहीं मिली।")
 
