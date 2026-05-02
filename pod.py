@@ -8,9 +8,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
 import io
-from streamlit_cropper import st_cropper
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
+
+# A4 size at 150 DPI (width x height in pixels)
+A4_W, A4_H = 1240, 1754  # 210mm x 297mm @ 150dpi
 
 # ==========================================
 # 🗄️ DATABASE — Connection Unchanged
@@ -81,7 +83,79 @@ def get_trip_summary(trip_id):
         return None, 0, 0, None
 
 # ==========================================
-# 📤 DRIVE UPLOAD FUNCTIONS
+# 📄 A4 PDF BUILDER
+# ==========================================
+
+def image_to_a4(img: Image.Image) -> Image.Image:
+    """
+    Kisi bhi size/orientation ki image ko A4 canvas par
+    center mein fit karke white background par paste karta hai.
+    Aspect ratio maintain rehti hai — stretch nahi hota.
+    """
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    img_w, img_h = img.size
+
+    # Portrait ya Landscape decide karo image ke ratio se
+    if img_w > img_h:
+        # Landscape image → A4 Landscape canvas
+        canvas_w, canvas_h = A4_H, A4_W
+    else:
+        # Portrait image → A4 Portrait canvas
+        canvas_w, canvas_h = A4_W, A4_H
+
+    # Image ko canvas mein fit karne ka scale
+    scale = min(canvas_w / img_w, canvas_h / img_h)
+    new_w = int(img_w * scale)
+    new_h = int(img_h * scale)
+    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+    # White A4 canvas banao
+    canvas = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
+
+    # Center mein paste karo
+    paste_x = (canvas_w - new_w) // 2
+    paste_y = (canvas_h - new_h) // 2
+    canvas.paste(img_resized, (paste_x, paste_y))
+
+    return canvas
+
+def build_a4_pdf(image_files) -> bytes | None:
+    """
+    List of uploaded files → har ek A4 page →
+    sab ka ek multi-page PDF (bytes).
+    PDF already ho to directly return karo.
+    """
+    # Single PDF file: seedha return
+    if len(image_files) == 1 and image_files[0].name.lower().endswith(".pdf"):
+        return image_files[0].read()
+
+    a4_pages = []
+    for file in image_files:
+        if not file.name.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
+        file.seek(0)
+        img = Image.open(file)
+        a4_page = image_to_a4(img)
+        a4_pages.append(a4_page)
+
+    if not a4_pages:
+        return None
+
+    pdf_bytes = io.BytesIO()
+    if len(a4_pages) == 1:
+        a4_pages[0].save(pdf_bytes, format="PDF",
+                         resolution=150)
+    else:
+        a4_pages[0].save(pdf_bytes, format="PDF",
+                         save_all=True,
+                         append_images=a4_pages[1:],
+                         resolution=150)
+    return pdf_bytes.getvalue()
+
+# ==========================================
+# 📤 DRIVE UPLOAD
 # ==========================================
 
 def upload_to_drive(file_bytes, file_name):
@@ -100,261 +174,41 @@ def upload_to_drive(file_bytes, file_name):
     except:
         return None
 
-def _save_pod_to_drive(db, gr_no, truck_no, trip_id, final_bytes, file_ext):
-    f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
-    d_id = upload_to_drive(final_bytes, f_name)
+def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files):
+    """
+    Images → A4 PDF → Drive → Owner_Ledger mein link save.
+    """
+    if not up_files:
+        st.warning("⚠️ पहले फ़ाइल चुनें!")
+        return
+
+    with st.spinner(f"📄 {len(up_files)} पेज की A4 PDF बन रही है..."):
+        final_bytes = build_a4_pdf(up_files)
+
+    if not final_bytes:
+        st.error("❌ PDF नहीं बनी। JPG/PNG/PDF फ़ाइल चुनें।")
+        return
+
+    with st.spinner("☁️ Drive पर अपलोड हो रही है..."):
+        f_name = f"POD_{gr_no}_{truck_no}.pdf"
+        d_id = upload_to_drive(final_bytes, f_name)
+
     if d_id:
-        pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
+        pod_url = (d_id if d_id.startswith("http")
+                   else f"https://drive.google.com/file/d/{d_id}/view")
         db.worksheet("Owner_Ledger").append_row(
-            [str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0]
+            [str(datetime.date.today()), trip_id, gr_no, truck_no,
+             f"POD Link: {pod_url}", 0]
         )
         st.cache_data.clear()
-        st.success("✅ बिल्टी (POD) सुरक्षित Drive पर सेव हो गई!")
+        st.success(f"✅ {len(up_files)} पेज की A4 PDF Drive पर सेव हो गई! 🖨️ Print-ready है।")
         time.sleep(1.5)
         st.rerun()
     else:
         st.error("❌ Drive अपलोड फेल! दोबारा कोशिश करें।")
 
 # ==========================================
-# ✂️ MULTI-PAGE CROP UI — CORE FUNCTION
-# ==========================================
-
-def show_pod_crop_and_upload(db, gr_no, truck_no, trip_id, up_files, key_prefix="pod"):
-    """
-    - Unlimited images upload kar sakte hain
-    - Har image ke liye alag crop box
-    - Ek page se doosre par navigate karo (tabs)
-    - Crop ki gayi sab images → ek PDF → Drive
-    - Skip crop button bhi hai
-    """
-    if not up_files:
-        st.warning("⚠️ पहले फ़ाइल चुनें!")
-        return
-
-    # ── PDF: seedha Drive par ──
-    if len(up_files) == 1 and up_files[0].name.lower().endswith(".pdf"):
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🚀 PDF Drive पर सेव करें",
-                         type="primary", use_container_width=True,
-                         key=f"{key_prefix}_pdf_save"):
-                with st.spinner("PDF Drive पर जा रही है..."):
-                    _save_pod_to_drive(db, gr_no, truck_no, trip_id,
-                                       up_files[0].read(), "pdf")
-        return
-
-    # ── Image files filter ──
-    image_files = [f for f in up_files
-                   if f.name.lower().endswith((".jpg", ".jpeg", ".png"))]
-    if not image_files:
-        st.error("❌ कोई valid image नहीं मिली (JPG/PNG चाहिए)।")
-        return
-
-    total_pages = len(image_files)
-
-    # ── Session State init ──
-    ss_images_key  = f"{key_prefix}_orig_images"
-    ss_crops_key   = f"{key_prefix}_cropped_images"
-    ss_page_key    = f"{key_prefix}_current_page"
-    ss_done_key    = f"{key_prefix}_crop_done"
-
-    # Images ko ek baar load karke session mein rakh do
-    if ss_images_key not in st.session_state:
-        loaded = []
-        for f in image_files:
-            f.seek(0)
-            img = Image.open(f)
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            # Performance: 1400px se bada ho to resize
-            if img.width > 1400:
-                ratio = 1400 / img.width
-                img = img.resize(
-                    (1400, int(img.height * ratio)), Image.LANCZOS
-                )
-            loaded.append(img)
-        st.session_state[ss_images_key] = loaded
-
-    if ss_crops_key not in st.session_state:
-        # Pehle original hi rakh do default mein
-        st.session_state[ss_crops_key] = {
-            i: st.session_state[ss_images_key][i].copy()
-            for i in range(total_pages)
-        }
-
-    if ss_page_key not in st.session_state:
-        st.session_state[ss_page_key] = 0
-
-    if ss_done_key not in st.session_state:
-        st.session_state[ss_done_key] = {i: False for i in range(total_pages)}
-
-    orig_images = st.session_state[ss_images_key]
-    current_page = st.session_state[ss_page_key]
-
-    # ── Header + Progress ──
-    st.markdown("#### ✂️ बिल्टी Crop करें")
-
-    done_count = sum(st.session_state[ss_done_key].values())
-    st.progress(done_count / total_pages,
-                text=f"✅ {done_count}/{total_pages} पेज crop हो गए")
-
-    # ── Page Tabs (ज़्यादा हो तो tabs, कम हो तो direct) ──
-    if total_pages <= 6:
-        tab_labels = [
-            f"{'✅' if st.session_state[ss_done_key][i] else '📄'} पेज {i+1}"
-            for i in range(total_pages)
-        ]
-        tabs = st.tabs(tab_labels)
-        for i, tab in enumerate(tabs):
-            with tab:
-                _render_single_crop(
-                    orig_images[i], i, key_prefix,
-                    ss_crops_key, ss_done_key, image_files[i].name
-                )
-    else:
-        # ज़्यादा pages के लिए: navigation arrows
-        col_prev, col_info, col_next = st.columns([1, 3, 1])
-        with col_prev:
-            if st.button("◀ पिछला", key=f"{key_prefix}_prev",
-                         disabled=(current_page == 0)):
-                st.session_state[ss_page_key] -= 1
-                st.rerun()
-        with col_info:
-            st.markdown(
-                f"<div style='text-align:center;font-weight:bold;padding-top:6px;'>"
-                f"पेज {current_page+1} / {total_pages}</div>",
-                unsafe_allow_html=True
-            )
-        with col_next:
-            if st.button("अगला ▶", key=f"{key_prefix}_next",
-                         disabled=(current_page == total_pages - 1)):
-                st.session_state[ss_page_key] += 1
-                st.rerun()
-
-        _render_single_crop(
-            orig_images[current_page], current_page, key_prefix,
-            ss_crops_key, ss_done_key, image_files[current_page].name
-        )
-
-    st.markdown("<hr style='margin:8px 0;border-color:#eee'>", unsafe_allow_html=True)
-
-    # ── Final Action Buttons ──
-    col_save, col_skip, col_reset = st.columns([2, 2, 1])
-
-    with col_save:
-        save_label = (
-            f"🚀 सभी {total_pages} पेज की PDF Drive पर सेव करें"
-            if done_count == total_pages
-            else f"🚀 PDF सेव करें ({done_count}/{total_pages} cropped)"
-        )
-        if st.button(save_label, type="primary",
-                     use_container_width=True, key=f"{key_prefix}_final_save"):
-            _build_and_save_pdf(
-                db, gr_no, truck_no, trip_id,
-                st.session_state[ss_crops_key], total_pages, key_prefix
-            )
-
-    with col_skip:
-        if st.button("⏭️ Crop किए बिना Original सेव करें",
-                     use_container_width=True, key=f"{key_prefix}_skip"):
-            with st.spinner("Original images से PDF बन रही है..."):
-                _build_and_save_pdf(
-                    db, gr_no, truck_no, trip_id,
-                    {i: orig_images[i] for i in range(total_pages)},
-                    total_pages, key_prefix
-                )
-
-    with col_reset:
-        if st.button("🔄 Reset", use_container_width=True,
-                     key=f"{key_prefix}_reset"):
-            for k in [ss_images_key, ss_crops_key, ss_page_key, ss_done_key]:
-                if k in st.session_state:
-                    del st.session_state[k]
-            st.rerun()
-
-
-def _render_single_crop(img, page_idx, key_prefix,
-                         ss_crops_key, ss_done_key, file_name):
-    """Ek page ka crop UI render karta hai"""
-    is_done = st.session_state[ss_done_key][page_idx]
-
-    col_crop, col_prev = st.columns([2, 1], gap="small")
-
-    with col_crop:
-        if is_done:
-            st.markdown(
-                "<span style='background:#d1e7dd;border-radius:12px;"
-                "padding:2px 10px;font-size:0.8rem;color:#0f5132;"
-                "font-weight:bold'>✅ Crop हो गई</span>",
-                unsafe_allow_html=True
-            )
-            st.image(
-                st.session_state[ss_crops_key][page_idx],
-                caption=f"Cropped: {file_name}",
-                use_container_width=True
-            )
-            if st.button(f"✏️ दोबारा Crop करें",
-                         key=f"{key_prefix}_reedit_{page_idx}"):
-                st.session_state[ss_done_key][page_idx] = False
-                st.rerun()
-        else:
-            st.caption(f"📄 {file_name} — नीली border खींचकर हिस्सा चुनें")
-            cropped = st_cropper(
-                img,
-                realtime_update=True,
-                box_color="#0055FF",
-                aspect_ratio=None,
-                key=f"{key_prefix}_cropper_{page_idx}"
-            )
-            if cropped:
-                st.session_state[ss_crops_key][page_idx] = cropped
-
-            if st.button(f"✅ यह Crop ठीक है — अगला पेज",
-                         type="primary",
-                         use_container_width=True,
-                         key=f"{key_prefix}_confirm_{page_idx}"):
-                st.session_state[ss_done_key][page_idx] = True
-                st.rerun()
-
-    with col_prev:
-        st.markdown("**👁️ Preview**")
-        preview_img = (st.session_state[ss_crops_key][page_idx]
-                       if is_done else cropped if not is_done and 'cropped' in dir() and cropped
-                       else img)
-        st.image(preview_img, use_container_width=True)
-        if preview_img:
-            st.caption(f"{preview_img.width}×{preview_img.height}px")
-
-
-def _build_and_save_pdf(db, gr_no, truck_no, trip_id,
-                         crops_dict, total_pages, key_prefix):
-    """Cropped images dictionary se PDF banao aur Drive par save karo"""
-    with st.spinner(f"📄 {total_pages} पेज की PDF बन रही है..."):
-        images_list = [crops_dict[i] for i in range(total_pages)
-                       if crops_dict.get(i) is not None]
-        if not images_list:
-            st.error("❌ कोई image नहीं मिली।")
-            return
-        pdf_bytes = io.BytesIO()
-        if len(images_list) == 1:
-            images_list[0].save(pdf_bytes, format="PDF")
-        else:
-            images_list[0].save(
-                pdf_bytes, format="PDF",
-                save_all=True,
-                append_images=images_list[1:]
-            )
-        # Session cleanup
-        for k in [f"{key_prefix}_orig_images", f"{key_prefix}_cropped_images",
-                  f"{key_prefix}_current_page", f"{key_prefix}_crop_done"]:
-            if k in st.session_state:
-                del st.session_state[k]
-
-        _save_pod_to_drive(db, gr_no, truck_no, trip_id,
-                           pdf_bytes.getvalue(), "pdf")
-
-# ==========================================
-# 💾 SAVE FUNCTIONS
+# 💾 LEDGER SAVE FUNCTIONS
 # ==========================================
 
 def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage_amt):
@@ -413,9 +267,7 @@ def show_pod_page():
             div[data-testid="stHorizontalBlock"] { gap: 0.35rem !important; }
             .stTextInput > div > div > input,
             .stNumberInput > div > div > input {
-                padding: 2px !important;
-                min-height: 1.7rem !important;
-                font-size: 0.85rem !important;
+                padding: 2px !important; min-height: 1.7rem !important; font-size: 0.85rem !important;
             }
             label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: 0 !important; }
             div[data-testid="stAlert"] { padding: 4px 10px !important; margin: 0.1rem 0 !important; }
@@ -516,6 +368,7 @@ def show_pod_page():
     weight        = float(trip_bk['weight'])
     owner_freight = int(trip_bk['truck freight'])
 
+    # ── Live Passbook ──
     st.markdown("### 📊 लाइव पासबुक")
     c1, c2, c3, c4 = st.columns(4)
     with c1: st.metric("कुल भाड़ा", f"₹{owner_freight:,}")
@@ -542,30 +395,37 @@ def show_pod_page():
     st.markdown("<hr>", unsafe_allow_html=True)
     db = connect_to_sheet()
 
-    # ── CASE A: हिसाब पूरा ──
+    # ==========================================
+    # CASE A: हिसाब पूरा
+    # ==========================================
     if current_bal <= 0:
         st.success(f"✅ हिसाब पूरा! बैलेंस: ₹{current_bal:,}")
         if not existing_pod_url:
             st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
             st.markdown("#### 📄 बिल्टी (POD) अपलोड करें")
+            st.caption("🖨️ हर फोटो A4 size के अलग PDF page पर save होगी")
             up_files = st.file_uploader(
-                "पेज चुनें (एक या ज़्यादा फोटो / PDF)",
+                "फोटो/PDF चुनें (एक या ज़्यादा)",
                 type=["pdf", "jpg", "jpeg", "png"],
                 accept_multiple_files=True,
                 key="pod_only"
             )
             if up_files:
-                show_pod_crop_and_upload(
-                    db, gr_no, truck_no, trip_id, up_files, key_prefix="case_a"
-                )
+                st.info(f"📎 {len(up_files)} फ़ाइल चुनी गई — हर एक A4 page बनेगी")
+                if st.button("🚀 A4 PDF बनाएं और Drive पर सेव करें",
+                             type="primary", key="save_a", use_container_width=True):
+                    save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files)
             st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    # ── CASE B: बाकी बैलेंस है ──
+    # ==========================================
+    # CASE B: बाकी बैलेंस है
+    # ==========================================
     st.warning(f"💰 अभी का बाकी बैलेंस: **₹{current_bal:,}**")
 
     col_pod, col_pay = st.columns([1, 1.4], gap="small")
 
+    # ── Left: POD Upload ──
     with col_pod:
         st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
         st.markdown("#### 📄 1. बिल्टी (POD) अपलोड")
@@ -573,6 +433,7 @@ def show_pod_page():
             st.markdown(
                 "<span class='pod-badge'>✅ पहले से अपलोड है</span>",
                 unsafe_allow_html=True)
+        st.caption("🖨️ हर फोटो A4 size के अलग PDF page पर save होगी")
         up_files = st.file_uploader(
             "फोटो/PDF (एक या ज़्यादा)",
             type=["pdf", "jpg", "jpeg", "png"],
@@ -580,11 +441,13 @@ def show_pod_page():
             key="pod_sep"
         )
         if up_files:
-            show_pod_crop_and_upload(
-                db, gr_no, truck_no, trip_id, up_files, key_prefix="case_b"
-            )
+            st.info(f"📎 {len(up_files)} फ़ाइल चुनी गई")
+            if st.button("🚀 A4 PDF बनाएं और सेव करें",
+                         use_container_width=True, key="save_b"):
+                save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files)
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # ── Right: Final Payment ──
     with col_pay:
         st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
         st.markdown("#### 💳 2. फाइनल पेमेंट (Settlement)")
