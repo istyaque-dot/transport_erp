@@ -429,4 +429,4 @@ def show_receivable_page():
 
         if cb2.button("❌ कैंसिल"):
             st.session_state.show_rec_confirm = False
-            st.rerun() isko bhi update kare
+            st.rerun() 
