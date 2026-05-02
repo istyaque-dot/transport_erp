@@ -19,27 +19,23 @@ supabase: Client = init_supabase()
 # ==========================================
 
 @st.cache_data(ttl=60)
-def get_outstanding_data():
+def get_outstanding_data_v2():
     try:
-        # 1. Fetch Bookings (Base Data)
+        # 1. Fetch Bookings
         bk_res = supabase.table("bookings").select("*").execute()
         df_bk = pd.DataFrame(bk_res.data) if bk_res.data else pd.DataFrame()
-        
         if df_bk.empty: return [], [], 0, 0
 
-        # 2. Fetch Advances (Summary)
+        # 2. Fetch Advances
         adv_res = supabase.table("advances").select("trip_id, amount").execute()
         df_adv = pd.DataFrame(adv_res.data)
         adv_map = df_adv.groupby("trip_id")["amount"].sum().to_dict() if not df_adv.empty else {}
 
-        # 3. Fetch Owner Ledger (Settlements)
+        # 3. Fetch Ledgers
         own_res = supabase.table("owner_ledger").select("trip_id, amount, description").execute()
         df_own = pd.DataFrame(own_res.data)
-        # सिर्फ वो एंट्रीज जो फाइनल हिसाब या शॉर्टेज से जुड़ी हैं
-        df_own_filt = df_own[df_own['description'].str.contains("Final|Shortage|Extra|Detention", na=False)]
-        own_map = df_own_filt.groupby("trip_id")["amount"].sum().to_dict() if not df_own_filt.empty else {}
+        own_map = df_own[df_own['description'].str.contains("Final|Shortage|Extra|Detention", na=False)].groupby("trip_id")["amount"].sum().to_dict() if not df_own.empty else {}
 
-        # 4. Fetch Company Ledger (Settlements & Receivables)
         comp_res = supabase.table("company_ledger").select("trip_id, amount").execute()
         df_comp = pd.DataFrame(comp_res.data)
         comp_map = df_comp.groupby("trip_id")["amount"].sum().to_dict() if not df_comp.empty else {}
@@ -50,39 +46,33 @@ def get_outstanding_data():
         for _, row in df_bk.iterrows():
             tid = str(row['trip_id'])
             
-            # --- 🟢 PARTY SE LENA HAI (Company) ---
+            # 🟢 Party Side
             comp_fr = float(row['comp_freight'])
             if comp_fr > 0:
                 tds = comp_fr * 0.01
-                expected = comp_fr - tds
-                # Company Ledger me sari entries ka sum (received payment is already negative there)
-                c_bal = expected + comp_map.get(tid, 0)
+                c_bal = (comp_fr - tds) + comp_map.get(tid, 0)
                 if c_bal > 10:
                     lena_list.append({
-                        "तारीख": row['date_val'], "गाड़ी": row['truck_no'], "कंपनी": row['company'],
+                        "تारीख": row['date_val'], "गाड़ी": row['truck_no'], "कंपनी": row['company'],
                         "कहाँ तक": row['to_loc'], "कुल भाड़ा": int(comp_fr), "बाकी लेना": int(c_bal)
                     })
                     total_lena += c_bal
 
-            # --- 🔴 TRUCK KO DENA HAI (Owner) ---
+            # 🔴 Truck Side
             own_fr = float(row['owner_freight'])
             if own_fr > 0:
-                munshiyana = float(row['uni_amt'])
-                adv_given = adv_map.get(tid, 0)
-                own_settle = own_map.get(tid, 0)
-                
-                # Formula: (कुल - मुंशीयाना) - एडवांस + लेजर एडजस्टमेंट
-                o_bal = (own_fr - munshiyana) - adv_given + own_settle
+                mun = float(row['uni_amt'])
+                o_bal = (own_fr - mun) - adv_map.get(tid, 0) + own_map.get(tid, 0)
                 if o_bal > 10:
                     dena_list.append({
                         "तारीख": row['date_val'], "गाड़ी": row['truck_no'], "कहाँ तक": row['to_loc'],
-                        "कुल भाड़ा": int(own_fr), "एडवांस": int(adv_given), "बाकी देना": int(o_bal)
+                        "कुल भाड़ा": int(own_fr), "एडवांस": int(adv_map.get(tid, 0)), "बाकी देना": int(o_bal)
                     })
                     total_dena += o_bal
 
         return lena_list, dena_list, total_lena, total_dena
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Data Error: {e}")
         return [], [], 0, 0
 
 # ==========================================
@@ -91,36 +81,38 @@ def get_outstanding_data():
 
 def show_outstanding_page():
     st.header("💸 लेना और देना (Outstanding V2)")
-    st.write("मार्केट से लेना और गाड़ी वालों को देना - पूरा हिसाब यहाँ देखें।")
+    
+    # Refresh Row
+    r1, r2 = st.columns([4, 1])
+    with r1: search = st.text_input("🔍 गाड़ी नंबर या कंपनी से खोजें...", placeholder="उदा. 5050 या Universal")
+    with r2:
+        if st.button("🔄 Refresh", use_container_width=True, type="primary"):
+            st.cache_data.clear(); st.rerun()
 
-    if st.button("🔄 हिसाब रिफ्रेश करें", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
-
-    with st.spinner("⏳ डेटाबेस से लाइव हिसाब जोड़ा जा रहा है..."):
-        lena, dena, t_lena, t_dena = get_outstanding_data()
+    with st.spinner("⏳ हिसाब कैलकुलेट हो रहा है..."):
+        lena, dena, t_lena, t_dena = get_outstanding_data_v2()
 
     # Dashboard Metrics
-    c1, c2 = st.columns(2)
-    c1.metric("🟢 मार्केट से कुल लेना है", f"₹ {int(t_lena):,}")
-    c2.metric("🔴 गाड़ी वालों को कुल देना है", f"₹ {int(t_dena):,}")
+    m1, m2 = st.columns(2)
+    m1.metric("🟢 मार्केट से लेना", f"₹{int(t_lena):,}")
+    m2.metric("🔴 गाड़ी वालों को देना", f"₹{int(t_dena):,}")
 
     st.divider()
 
-    t1, t2 = st.tabs(["🏢 कंपनियों से लेना है", "🚛 गाड़ी वालों को देना है"])
+    t1, t2 = st.tabs(["🟢 कंपनियों से लेना है", "🔴 गाड़ी वालों को देना है"])
 
     with t1:
         if lena:
-            df_l = pd.DataFrame(lena).sort_values("तारीख", ascending=False)
-            st.dataframe(df_l, use_container_width=True, hide_index=True)
-            st.download_button("📥 पार्टी लिस्ट डाउनलोड (CSV)", df_l.to_csv(index=False), "Party_Dues.csv")
-        else:
-            st.success("🎉 मार्केट में कोई पैसा बाकी नहीं है!")
+            df_l = pd.DataFrame(lena)
+            if search:
+                df_l = df_l[df_l.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
+            st.dataframe(df_l.sort_values("تारीख", ascending=False), use_container_width=True, hide_index=True)
+        else: st.success("🎉 मार्केट क्लियर है!")
 
     with t2:
         if dena:
-            df_d = pd.DataFrame(dena).sort_values("तारीख", ascending=False)
-            st.dataframe(df_d, use_container_width=True, hide_index=True)
-            st.download_button("📥 गाड़ी लिस्ट डाउनलोड (CSV)", df_d.to_csv(index=False), "Truck_Dues.csv")
-        else:
-            st.success("🎉 सब क्लियर है! किसी गाड़ी का बकाया नहीं है।")
+            df_d = pd.DataFrame(dena)
+            if search:
+                df_d = df_d[df_d.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)]
+            st.dataframe(df_d.sort_values("तारीख", ascending=False), use_container_width=True, hide_index=True)
+        else: st.success("🎉 गाड़ी वाले क्लियर हैं!")
