@@ -1,57 +1,73 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
-# 🚀 SUPABASE CONFIG
+# 🗄️ DATABASE QUERIES (Google Sheets)
 # ==========================================
-SUPABASE_URL = "https://tsyghmvqrlxwicipkvqw.supabase.co"
-SUPABASE_KEY = "sb_publishable_p0_eR7aMIL5KDvUkiwm18g_t1OtXBDv"
 
 @st.cache_resource
-def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-supabase: Client = init_supabase()
-
-# ==========================================
-# 🗄️ DATABASE QUERIES (Supabase)
-# ==========================================
-
-@st.cache_data(ttl=30)
-def get_all_balances():
-    """एक ही क्वेरी में सारे बैंकों और खास खातों का बैलेंस निकालना"""
-    try:
-        # Bank Ledgers से बैलेंस (Group by bank_name)
-        res = supabase.table("bank_ledgers").select("bank_name, amount").execute()
-        df = pd.DataFrame(res.data)
-        balances = df.groupby("bank_name")["amount"].sum().to_dict() if not df.empty else {}
-        
-        # Ishtyaque और Universal Ledger से बैलेंस
-        ish_res = supabase.table("ishtyaque_ledger").select("amount").execute()
-        ish_bal = sum(item['amount'] for item in ish_res.data) if ish_res.data else 0
-        
-        uni_res = supabase.table("universal_ledger").select("amount").execute()
-        uni_bal = sum(item['amount'] for item in uni_res.data) if uni_res.data else 0
-        
-        return balances, ish_bal, uni_bal
-    except:
-        return {}, 0, 0
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        dict(st.secrets["gcp_service_account"]), scope)
+    return gspread.authorize(creds).open("Khan_Transport_ERP")
 
 @st.cache_data(ttl=60)
-def get_truck_payable_v2():
-    """गाड़ी वालों को कुल कितना देना बाकी है (Bookings - Advances)"""
+def get_dashboard_data():
+    """गूगल शीट से सभी खातों का बैलेंस एक साथ निकालना"""
     try:
-        # 1. कुल गाड़ी भाड़ा (Bookings)
-        bk_res = supabase.table("bookings").select("owner_freight, uni_amt").execute()
-        total_fr = sum(float(row['owner_freight']) - float(row['uni_amt']) for row in bk_res.data)
+        db = connect_to_sheet()
         
-        # 2. अब तक दिया गया एडवांस
-        adv_res = supabase.table("advances").select("amount").execute()
-        total_adv = sum(float(row['amount']) for row in adv_res.data)
+        # 1. बैंक और नकद के नाम (Sheets Name)
+        banks_map = {
+            "Cash": "Cash_Ledger",
+            "Canara 311": "Canara_311_Ledger",
+            "Canara 41": "Canara_41_Ledger",
+            "BOB": "BOB_Ledger",
+            "Canara 1747": "canara_1747",
+            "Pump": "Shekh_Filling_Ledger"
+        }
         
-        return total_fr - total_adv
-    except: return 0
+        results = {}
+        for key, sheet_name in banks_map.items():
+            try:
+                # आखिरी कॉलम का टोटल निकालना[cite: 1]
+                df = pd.DataFrame(db.worksheet(sheet_name).get_all_values())
+                if len(df) > 1:
+                    last_col = df.iloc[1:, -1].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
+                    results[key] = int(pd.to_numeric(last_col, errors='coerce').fillna(0).sum())
+                else: results[key] = 0
+            except: results[key] = 0
+
+        # 2. इश्तियाक और यूनिवर्सल लेजर
+        ish_df = pd.DataFrame(db.worksheet("Ishtyaque_Ledger").get_all_values())
+        ish_bal = int(pd.to_numeric(ish_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').fillna(0).sum()) if len(ish_df)>1 else 0
+        
+        uni_df = pd.DataFrame(db.worksheet("Universal_Ledger").get_all_values())
+        uni_bal = int(pd.to_numeric(uni_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').fillna(0).sum()) if len(uni_df)>1 else 0
+
+        # 3. गाड़ी वालों को देय (Payable) - Bookings vs Advances
+        bk_df = pd.DataFrame(db.worksheet("Bookings").get_all_values())
+        if len(bk_df) > 1:
+            bk_df.columns = bk_df.iloc[0]
+            bk_df = bk_df[1:]
+            total_fr = pd.to_numeric(bk_df['total fright'].str.replace(',', ''), errors='coerce').sum() #[cite: 1]
+        else: total_fr = 0
+
+        adv_df = pd.DataFrame(db.worksheet("Advances").get_all_values())
+        total_adv = pd.to_numeric(adv_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').sum() if len(adv_df)>1 else 0
+
+        return results, ish_bal, uni_bal, (total_fr - total_adv)
+
+    except Exception as e:
+        st.error(f"Data Error: {e}")
+        return {}, 0, 0, 0
 
 # ==========================================
 # 🎨 CSS
@@ -65,7 +81,7 @@ DASH_CSS = """
 .sum-green { background:#d1e7dd; border-left:4px solid #198754; color:#0f5132; }
 .sum-red { background:#fee2e2; border-left:4px solid #dc3545; color:#991b1b; }
 .sum-blue { background:#dbeafe; border-left:4px solid #003399; color:#1e3a8a; }
-.pill { background: #003399; color: white; border-radius: 20px; padding: 2px 14px; font-size: 0.74rem; font-weight: 700; }
+.pill { background: #003399; color: white; border-radius: 20px; padding: 2px 14px; font-size: 0.74rem; font-weight: 700; display:inline-block; margin-bottom:5px; }
 </style>
 """
 
@@ -78,23 +94,22 @@ def show_dashboard_page():
 
     # Header
     h1, h2 = st.columns([5, 1])
-    with h1: st.header("📊 डैशबोर्ड — बिज़नेस समरी (V2)")
+    with h1: st.header("📊 डैशबोर्ड — बिज़नेस समरी (Sheets)")
     with h2:
         if st.button("🔄 Refresh", type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
     # Get Data
-    bank_bals, ish_bal, uni_bal = get_all_balances()
-    payable = get_truck_payable_v2()
+    bank_bals, ish_bal, uni_bal, payable = get_dashboard_data()
 
-    # Define Bank Balances (Safe fetch)
+    # Define Bank Balances
     cash = bank_bals.get("Cash", 0)
     c311 = bank_bals.get("Canara 311", 0)
     c41 = bank_bals.get("Canara 41", 0)
     bob = bank_bals.get("BOB", 0)
     c1747 = bank_bals.get("Canara 1747", 0)
-    pump = bank_bals.get("Pump (Shekh Filling)", 0)
+    pump = bank_bals.get("Pump", 0)
 
     total_liquidity = cash + c311 + c41 + bob + c1747
 
@@ -130,4 +145,4 @@ def show_dashboard_page():
     p_status = "देना बाकी ⏳" if pump < 0 else "एडवांस जमा ✅"
     sp3.metric("⛽ शेख फिलिंग", f"₹{abs(pump):,}", p_status, delta_color="inverse" if pump < 0 else "normal")
 
-    st.markdown("<div style='text-align:center; color:#bbb; font-size:0.7rem; margin-top:5vh;'>डेटा सीधे Supabase से आ रहा है · Khan Transport ERP v2.0</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:center; color:#bbb; font-size:0.7rem; margin-top:5vh;'>डेटा सीधे Google Sheets से आ रहा है · Khan Transport ERP v1.0</div>", unsafe_allow_html=True)
