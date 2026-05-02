@@ -1,14 +1,14 @@
-import json
 import streamlit as st
 import datetime
 import time
 import pandas as pd
-import requests
-import base64
-from oauth2client.service_account import ServiceAccountCredentials
 import gspread
-from PIL import Image
-import io
+import json
+from oauth2client.service_account import ServiceAccountCredentials
+import requests        
+import base64          
+from PIL import Image 
+import io              
 
 # ==========================================
 # ⚠️ Google Apps Script Web App URL
@@ -18,6 +18,7 @@ WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
+
 @st.cache_resource(ttl=86400)
 def connect_to_sheet():
     scope = [
@@ -27,15 +28,19 @@ def connect_to_sheet():
     ]
     creds_dict = dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
     client = gspread.authorize(creds)
-    return client.open("Khan_Transport_ERP")
+    sheet = client.open("Khan_Transport_ERP")
+    return sheet
 
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
     elif file_name.lower().endswith(".png"): mime_type = "image/png"
     else: mime_type = "image/jpeg"
+        
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
+    
     try:
         res = requests.post(WEB_APP_URL, data=payload)
         result = res.text.strip()
@@ -47,12 +52,14 @@ def prepare_pod_file(uploaded_files):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
         return uploaded_files[0].read(), "pdf"
+    
     images = []
     for file in uploaded_files:
         if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
             img = Image.open(file)
             if img.mode != 'RGB': img = img.convert('RGB')
             images.append(img)
+    
     if images:
         pdf_bytes = io.BytesIO()
         if len(images) == 1: images[0].save(pdf_bytes, format="PDF")
@@ -117,13 +124,52 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
 # 🖥️ USER INTERFACE
 # ==========================================
 def show_pod_page():
+    # 🟢 11-INCH MAC COMPACT & BALANCED CSS
+    st.markdown("""
+        <style>
+            .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.4rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1.1rem !important; margin-bottom: 5px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 1.05rem !important; margin-bottom: 8px !important; color: #003399; }
+            
+            div[data-testid="stVerticalBlock"] { gap: 0.6rem !important; } 
+            div[data-testid="stHorizontalBlock"] { gap: 0.6rem !important; }
+            
+            .stTextInput > div > div > input, 
+            .stNumberInput > div > div > input, 
+            .stSelectbox > div > div > select { 
+                padding-top: 4px !important; padding-bottom: 4px !important; min-height: 2.2rem !important; font-size: 0.9rem !important;
+            }
+            
+            label { font-size: 0.85rem !important; font-weight: 600 !important; margin-bottom: 2px !important; padding-bottom: 0px !important; }
+            div[data-testid="stAlert"] { padding: 8px 12px !important; min-height: 35px !important; margin-top: 8px !important; margin-bottom: 8px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.9rem !important; margin: 0px !important; }
+            
+            div[data-testid="metric-container"] {
+                background-color: #ffffff; border: 1px solid #e0e0e0; padding: 5px 10px; border-radius: 8px; box-shadow: 0px 2px 4px rgba(0,0,0,0.05);
+            }
+            @media (prefers-color-scheme: dark) {
+                div[data-testid="metric-container"] { background-color: #1e1e1e; border-color: #333; }
+            }
+            div[data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+            
+            hr { margin: 0.6em 0px !important; }
+            .stButton > button { min-height: 2.2rem !important; padding: 2px 10px !important; }
+            
+            /* Custom Box Design for Side-by-Side layout */
+            .custom-box {
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; height: 100%; margin-top: 0px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     st.header("🏁 POD और फाइनल हिसाब (Settlement)")
     db = connect_to_sheet()
     df_owner_raw = db.worksheet("Owner_Ledger").get_all_values()
     
     if len(df_owner_raw) > 1:
         df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
-        # 🟢 पुरानी और फाइनल हो चुकी गाड़ियों को लिस्ट से हटाना
+        # पुरानी और फाइनल हो चुकी गाड़ियों को लिस्ट से हटाना
         df_pending = df_owner[~df_owner.iloc[:, 4].astype(str).str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].iloc[::-1]
         
         st.write("---")
@@ -131,19 +177,17 @@ def show_pod_page():
         # 🟢 स्मार्ट GR सर्च सिस्टम
         col_s1, col_s2 = st.columns([1, 2])
         with col_s1:
-            search_gr = st.text_input("🔍 GR नंबर से खोजें (पुरानी गाड़ी के लिए):")
+            search_gr = st.text_input("🔍 GR नंबर से खोजें:")
             
         if search_gr:
-            # अगर GR टाइप किया है, तो सिर्फ उसी GR की गाड़ी खोजेगा
             df_show = df_pending[df_pending.iloc[:, 2].astype(str).str.contains(search_gr.strip(), case=False, na=False)]
         else:
-            # 🟢 LIMIT HATA DI GAYI HAI - अब सारी पेंडिंग गाड़ियाँ दिखेंगी
             df_show = df_pending
             
         choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_show.iterrows()]
         
         with col_s2:
-            selected = st.selectbox("📝 नीचे लिस्ट से गाड़ी चुनें", ["चुनें..."] + choices)
+            selected = st.selectbox("📝 नीचे लिस्ट से गाड़ी चुनें", ["चुनें..."] + choices, label_visibility="collapsed")
         
         st.write("---")
         
@@ -159,30 +203,40 @@ def show_pod_page():
                 weight = float(trip_bk['weight'])
                 owner_freight = int(trip_bk['truck freight'])
                 
-                st.subheader("📊 लाइव पासबुक")
-                c1, c2, c3 = st.columns(3)
+                st.markdown("### 📊 लाइव पासबुक")
+                c1, c2, c3, c4 = st.columns(4)
                 with c1: st.metric("कुल भाड़ा", f"₹{owner_freight:,}")
                 with c2: st.metric("एडवांस दे चुके", f"₹{total_adv:,}")
                 with c3:
                     default_munshi = int(weight * 1)
-                    munshiyana = st.number_input("✍️ मुंशीयाना (Edit करें)", min_value=0, value=default_munshi, step=50)
+                    munshiyana = st.number_input("✍️ मुंशीयाना", min_value=0, value=default_munshi, step=50)
                 
                 current_bal = (owner_freight - munshiyana - total_adv) + already_adj
                 
+                with c4:
+                    if current_bal > 0:
+                        st.metric("बैलेंस (देना है)", f"₹{current_bal:,}", "बाकी", delta_color="inverse")
+                    else:
+                        st.metric("बैलेंस", f"₹{current_bal:,}", "क्लियर ✅", delta_color="normal")
+                
                 if existing_pod_url:
                     st.success("📄 इस गाड़ी की बिल्टी (POD) सिस्टम में सेव है।")
-                    st.link_button("📥 सेव की गई बिल्टी (POD) यहाँ से देखें / डाउनलोड करें", existing_pod_url, type="secondary")
+                    st.link_button("📥 सेव की गई बिल्टी (POD) देखें / डाउनलोड करें", existing_pod_url, type="secondary")
+                
                 st.divider()
 
                 if current_bal <= 0:
+                    # हिसाब क्लियर है, सिर्फ POD का ऑप्शन दिखाओ
                     st.success(f"✅ इस गाड़ी का फुल एंड फाइनल हिसाब हो चुका है! (बैलेंस: ₹{current_bal:,})")
                     st.info(f"कुल भाड़ा (मुंशीयाना हटाकर): ₹{owner_freight - munshiyana:,} | कुल पेमेंट (एडवांस + फाइनल): ₹{total_adv:,}")
-                    st.subheader("📄 नई बिल्टी (POD) अपलोड")
-                    st.write("अगर बिल्टी में कई पन्ने (Pages) हैं, तो एक साथ सारी फोटो सेलेक्ट करें। सिस्टम खुद उसकी एक PDF बना देगा!")
-                    up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only_upload")
+                    
+                    st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
+                    st.markdown("#### 📄 नई बिल्टी (POD) अपलोड")
+                    st.write("अगर बिल्टी में कई पन्ने हैं, तो एक साथ फोटो सेलेक्ट करें।")
+                    up_files = st.file_uploader("बिल्टी के पेज चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only_upload", label_visibility="collapsed")
                     if st.button("🚀 सिर्फ POD अपलोड करें", type="primary"):
                         if up_files:
-                            with st.spinner("बिल्टी की PDF बन रही है और Drive पर सेव हो रही है..."):
+                            with st.spinner("बिल्टी सेव हो रही है..."):
                                 final_bytes, file_ext = prepare_pod_file(up_files)
                                 if final_bytes:
                                     f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
@@ -191,51 +245,60 @@ def show_pod_page():
                                         pod_url = d_id if "http" in d_id else f"https://drive.google.com/file/d/{d_id}/view"
                                         db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
                                         st.cache_data.clear()
-                                        st.success("✅ सारी फोटो जुड़कर एक PDF बन गई और सुरक्षित सेव हो गई!")
+                                        st.success("✅ PDF सुरक्षित सेव हो गई!")
                                         time.sleep(2); st.rerun()
-                                    else: st.error("❌ अपलोड फेल हो गया! (Google Web App Error)")
-                                else: st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
-                        else: st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+                                    else: st.error("❌ अपलोड फेल हो गया!")
+                                else: st.error("❌ प्रोसेस दिक्कत।")
+                        else: st.error("⚠️ फोटो चुनें!")
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    
                 else:
                     st.warning(f"💰 **अभी का बाकी बैलेंस: ₹{current_bal:,}**")
                     
-                    # --- PART 1: सिर्फ POD अपलोड ---
-                    st.subheader("📄 1. बिल्टी (POD) अपलोड करें")
-                    st.write("अगर आपको सिर्फ बिल्टी सेव करनी है (पेमेंट बाद में करेंगे), तो यहाँ से करें:")
-                    up_files = st.file_uploader("बिल्टी के पेज (फोटो) चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_upload_separate")
-                    if st.button("🚀 सिर्फ बिल्टी (POD) सेव करें"):
-                        if up_files:
-                            with st.spinner("बिल्टी की PDF बन रही है और Drive पर सेव हो रही है..."):
-                                final_bytes, file_ext = prepare_pod_file(up_files)
-                                if final_bytes:
-                                    f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
-                                    d_id = upload_to_drive(final_bytes, f_name)
-                                    if d_id:
-                                        pod_url = d_id if "http" in d_id else f"https://drive.google.com/file/d/{d_id}/view"
-                                        db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
-                                        st.cache_data.clear()
-                                        st.success("✅ बिल्टी (POD) सुरक्षित सेव हो गई!")
-                                        time.sleep(2); st.rerun()
-                                    else: st.error("❌ अपलोड फेल हो गया!")
-                                else: st.error("❌ फोटो को प्रोसेस करने में दिक्कत आई।")
-                        else: st.error("⚠️ कृपया पहले बिल्टी की फोटो चुनें!")
+                    # 🟢 SIDE-BY-SIDE LAYOUT FOR POD AND SETTLEMENT
+                    col_pod, col_pay = st.columns([1, 1.3], gap="small")
                     
-                    st.divider()
+                    # --- PART 1: सिर्फ POD अपलोड (Left Box) ---
+                    with col_pod:
+                        st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
+                        st.markdown("#### 📄 1. बिल्टी (POD) अपलोड")
+                        st.write("सिर्फ बिल्टी सेव करनी है, तो यहाँ से करें:")
+                        up_files = st.file_uploader("बिल्टी की फोटो", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_upload_separate")
+                        if st.button("🚀 सिर्फ बिल्टी सेव करें", use_container_width=True):
+                            if up_files:
+                                with st.spinner("Drive पर सेव हो रही है..."):
+                                    final_bytes, file_ext = prepare_pod_file(up_files)
+                                    if final_bytes:
+                                        f_name = f"POD_{gr_no}_{truck_no}.{file_ext}"
+                                        d_id = upload_to_drive(final_bytes, f_name)
+                                        if d_id:
+                                            pod_url = d_id if "http" in d_id else f"https://drive.google.com/file/d/{d_id}/view"
+                                            db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                                            st.cache_data.clear()
+                                            st.success("✅ सुरक्षित सेव हो गई!")
+                                            time.sleep(2); st.rerun()
+                                        else: st.error("❌ अपलोड फेल!")
+                                    else: st.error("❌ प्रोसेस दिक्कत।")
+                            else: st.error("⚠️ पहले फोटो चुनें!")
+                        st.markdown("</div>", unsafe_allow_html=True)
                     
-                    # --- PART 2: सिर्फ पेमेंट/हिसाब ---
-                    st.subheader("💳 2. फाइनल पेमेंट और हिसाब (Settlement)")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write("शॉर्टेज/कटी डालें:")
-                        shortage = st.number_input("Shortage / कटी (- ₹)", min_value=0, step=50)
-                        extra_pay = st.number_input("Detention / Extra KM (+ ₹)", min_value=0, step=100)
-                        adj_remark = st.text_input("कारण (Remarks / Comments)", value="Final Settlement")
+                    # --- PART 2: फाइनल पेमेंट (Right Box) ---
+                    with col_pay:
+                        st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
+                        st.markdown("#### 💳 2. फाइनल पेमेंट (Settlement)")
+                        
+                        r1, r2 = st.columns(2)
+                        with r1: shortage = st.number_input("Shortage / कटी (- ₹)", min_value=0, step=50)
+                        with r2: extra_pay = st.number_input("Detention / Extra (+ ₹)", min_value=0, step=100)
+                        
+                        r3, r4 = st.columns(2)
+                        with r3: adj_remark = st.text_input("कारण (Remarks)", value="Final Settlement")
+                        with r4: pay_mode = st.selectbox("पेमेंट बैंक/कैश?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
+                        
                         final_payable = current_bal - shortage + extra_pay
                         st.error(f"💵 **अब हाथ में देने वाली फाइनल रकम: ₹{final_payable:,}**")
-                    with col2:
-                        st.write("पेमेंट फाइनल करें:")
-                        pay_mode = st.selectbox("कहाँ से पेमेंट किया?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
-                        if st.button("✅ फुल एंड फाइनल पेमेंट करें", type="primary"):
+                        
+                        if st.button("✅ फुल एंड फाइनल पेमेंट करें", type="primary", use_container_width=True):
                             if pay_mode == "N/A" and final_payable > 0:
                                 st.error("⚠️ कृपया बैंक या Cash चुनें!")
                             else:
@@ -251,4 +314,5 @@ def show_pod_page():
                                     st.cache_data.clear()
                                     st.success(f"🎊 हिसाब बराबर! ₹{final_payable:,} का सेटलमेंट हो गया।")
                                     time.sleep(2); st.rerun()
+                        st.markdown("</div>", unsafe_allow_html=True)
     else: st.info("कोई डेटा नहीं मिला।")
