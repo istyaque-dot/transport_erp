@@ -1,47 +1,55 @@
-import json
 import streamlit as st
 import pandas as pd
 import datetime
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from supabase import create_client, Client
 
 # ==========================================
-# 🗄️ DATABASE FUNCTIONS
+# 🚀 SUPABASE CONFIG
+# ==========================================
+SUPABASE_URL = "https://tsyghmvqrlxwicipkvqw.supabase.co"
+SUPABASE_KEY = "sb_publishable_p0_eR7aMIL5KDvUkiwm18g_t1OtXBDv"
+
+@st.cache_resource
+def init_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = init_supabase()
+
+# ==========================================
+# 🗄️ DATABASE QUERIES (Supabase)
 # ==========================================
 
-@st.cache_resource(ttl=86400)
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    
-    client = gspread.authorize(creds)
-    sheet = client.open("Khan_Transport_ERP")
-    return sheet
-
-@st.cache_data(ttl=5) 
-def get_sheet_data_for_reports(sheet_name):
+@st.cache_data(ttl=10)
+def get_ledger_data(table_name, start_date, end_date):
     try:
-        db = connect_to_sheet()
-        data = db.worksheet(sheet_name).get_all_values()
-        return data if len(data) > 1 else []
-    except: return []
+        res = supabase.table(table_name).select("*")\
+            .gte("date_val", str(start_date))\
+            .lte("date_val", str(end_date))\
+            .order("date_val", desc=True).execute()
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=10)
+def get_trip_passbook(trip_id):
+    try:
+        # 1. Booking Info
+        bk = supabase.table("bookings").select("*").eq("trip_id", trip_id).single().execute()
+        # 2. Advance History
+        adv = supabase.table("advances").select("*").eq("trip_id", trip_id).execute()
+        # 3. Settlement History
+        ledg = supabase.table("owner_ledger").select("*").eq("trip_id", trip_id).execute()
+        return bk.data, adv.data, ledg.data
+    except: return None, [], []
 
 # ==========================================
 # 🖥️ USER INTERFACE
 # ==========================================
 
 def show_reports_page():
-    st.header("📑 बिज़नेस रिपोर्ट्स (Khan ERP)")
+    st.header("📑 बिज़नेस रिपोर्ट्स (V2 Superfast)")
     
-    # 🟢 नया टैब 'आज की पेमेंट्स' 5वें नंबर पर जोड़ा गया है
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🏦 खाता स्टेटमेंट", 
-        "Master Report", 
         "🚚 सिंगल गाड़ी हिसाब", 
         "📅 आज का काम", 
         "💸 आज की पेमेंट्स", 
@@ -51,247 +59,87 @@ def show_reports_page():
     # --- TAB 1: Ledger Report ---
     with tab1:
         st.markdown("### 📊 लेजर स्टेटमेंट")
-        col1, col2, col3 = st.columns(3)
-        with col1: account_type = st.selectbox("खाता चुनें:", ["Cash_Ledger", "Canara_311_Ledger", "Canara_41_Ledger", "BOB_Ledger", "Shekh_Filling_Ledger", "Company_Ledger", "Owner_Ledger", "Ishtyaque_Ledger", "Universal_Ledger", "canara_1747"])
-        with col2: start_date = st.date_input("कब से?", datetime.date.today().replace(day=1), key="rep_start")
-        with col3: end_date = st.date_input("कब तक?", datetime.date.today(), key="rep_end")
+        c1, c2, c3 = st.columns(3)
+        with c1: account = st.selectbox("खाता चुनें:", ["bank_ledgers", "company_ledger", "owner_ledger", "ishtyaque_ledger", "universal_ledger"])
+        with c2: s_date = st.date_input("कब से?", datetime.date.today().replace(day=1))
+        with c3: e_date = st.date_input("कब तक?", datetime.date.today())
 
         if st.button("📊 स्टेटमेंट दिखाएं"):
-            raw = get_sheet_data_for_reports(account_type)
-            if raw:
-                df = pd.DataFrame(raw[1:], columns=raw[0])
-                date_col = df.columns[0]
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                mask = (df[date_col].dt.date >= start_date) & (df[date_col].dt.date <= end_date)
-                filtered = df.loc[mask].copy()
-                if not filtered.empty:
-                    amt_col = filtered.columns[-1]
-                    filtered[amt_col] = pd.to_numeric(filtered[amt_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                    total_amt = filtered[amt_col].sum()
-                    st.metric("नेट बैलेंस", f"₹{int(total_amt):,}")
-                    csv_data = filtered.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Excel डाउनलोड करें", data=csv_data, file_name=f"{account_type}.csv", mime='text/csv')
-                    filtered[date_col] = filtered[date_col].dt.strftime('%Y-%m-%d')
-                    st.dataframe(filtered, use_container_width=True)
-                else: st.warning("डेटा नहीं मिला।")
+            df = get_ledger_data(account, s_date, e_date)
+            if not df.empty:
+                # Bank account filter if table is bank_ledgers
+                if account == "bank_ledgers":
+                    st.write("बैंक वाइज फिल्टर उपलब्ध है")
+                
+                total = df['amount'].sum()
+                st.metric("कुल बैलेंस (इस अवधि का)", f"₹{int(total):,}")
+                st.dataframe(df[['date_val', 'description', 'amount', 'truck_no', 'gr_no']], use_container_width=True)
+                st.download_button("📥 Excel डाउनलोड", df.to_csv(index=False), f"{account}.csv")
+            else: st.warning("इस अवधि में कोई डेटा नहीं मिला।")
 
-    # --- TAB 2: Master Report ---
-    with tab2:
-        if st.button("Load All Bookings"):
-            raw_bk = get_sheet_data_for_reports("Bookings")
-            if raw_bk: st.dataframe(pd.DataFrame(raw_bk[1:], columns=raw_bk[0]), use_container_width=True)
-
-    # --- TAB 3: SINGLE TRIP PASSBOOK (WITH GR & POD TOGETHER) ---
+    # --- TAB 2: SINGLE TRIP PASSBOOK ---
     with tab3:
-        st.markdown("### 🚚 गाड़ी का पक्का हिसाब")
-        all_bk = get_sheet_data_for_reports("Bookings")
-        if len(all_bk) > 1:
-            data_bk = all_bk[1:][::-1]
-            trip_options = [f"🚛 {r[6]} | GR: {r[8]} | ID: {r[14]}" for r in data_bk if len(r) > 14]
-            selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + trip_options)
+        st.markdown("### 🚚 गाड़ी का पक्का हिसाब (WhatsApp Ready)")
+        # Get last 50 bookings for dropdown
+        res_bk = supabase.table("bookings").select("trip_id, truck_no, gr_no, date_val").order("created_at", desc=True).limit(50).execute()
+        options = [f"🚛 {r['truck_no']} | GR: {r['gr_no']} | ID: {r['trip_id']}" for r in res_bk.data]
+        selected = st.selectbox("गाड़ी चुनें:", ["चुनें..."] + options)
+
+        if selected != "चुनें...":
+            tid = selected.split("ID: ")[1]
+            bk, advs, ledg = get_trip_passbook(tid)
             
-            if selected != "चुनें...":
-                sel_id = selected.split("ID: ")[1].strip()
-                trip_row = [r for r in data_bk if len(r) > 14 and r[14] == sel_id][0]
-                
-                truck_no = trip_row[6]
-                gr_no = trip_row[8]
-                dest = trip_row[7]
-                b_date = trip_row[0]
-                weight = float(trip_row[5])
-                owner_freight = int(float(str(trip_row[12]).replace(',', '')))
-                
-                munshiyana = int(weight * 1)
-                net_freight_after_munshiyana = owner_freight - munshiyana
-                
-                all_adv = get_sheet_data_for_reports("Advances")
-                total_adv = 0; adv_history = []
-                if all_adv:
-                    for r in all_adv[1:]:
-                        if len(r) > 8 and r[1].strip() == sel_id:
-                            amt = int(float(str(r[8]).replace(',', '')))
-                            total_adv += amt
-                            adv_history.append({"तारीख": r[0], "विवरण": f"Dsl: {r[3]} | Cash: {r[5]} | Bank: {r[6]}", "अमाउंट": f"₹{amt:,}"})
+            if bk:
+                # Basic Math
+                total_fr = int(bk['owner_freight'])
+                munshiyana = int(bk['weight'])
+                total_adv = sum(a['amount'] for a in advs)
+                total_adj = sum(l['amount'] for l in ledg if "Final" in l['description'] or "Shortage" in l['description'])
+                rem = (total_fr - munshiyana) - total_adv + total_adj
 
-                all_bal = get_sheet_data_for_reports("Owner_Ledger")
-                total_bal_paid = 0
-                pod_link = ""
-                if all_bal:
-                    for r in all_bal[1:]:
-                        if len(r) > 5 and r[1].strip() == sel_id:
-                            desc = str(r[4])
-                            if "POD Link:" in desc:
-                                pod_link = desc.replace("POD Link:", "").strip()
-                            if "Final Balance" in desc or "Shortage" in desc or "Extra" in desc or "Detention" in desc:
-                                try: total_bal_paid += int(float(str(r[5]).replace(',', '')))
-                                except: pass
-                total_bal_paid = abs(total_bal_paid)
-                
-                gr_link = ""
-                if len(trip_row) > 16 and "http" in str(trip_row[16]):
-                    gr_link = str(trip_row[16]).strip()
-
-                rem_balance = net_freight_after_munshiyana - total_adv - total_bal_paid
-                
-                st.write("---")
+                # Display
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("कुल भाड़ा", f"₹{owner_freight:,}")
-                c2.metric("मुंशीयाना (-)", f"₹{munshiyana:,}")
+                c1.metric("कुल भाड़ा", f"₹{total_fr:,}")
+                c2.metric("मुंशीयाना", f"-₹{munshiyana:,}")
                 c3.metric("कुल एडवांस", f"₹{total_adv:,}")
-                c4.metric("बाकी बकाया", f"₹{rem_balance:,}")
-                
-                if gr_link or pod_link:
-                    st.write("---")
-                    cc1, cc2 = st.columns(2)
-                    if gr_link: cc1.link_button("📄 GR (बिल्टी) कॉपी देखें", gr_link, use_container_width=True)
-                    if pod_link: cc2.link_button("🏁 POD (रिसीविंग) कॉपी देखें", pod_link, use_container_width=True)
+                c4.metric("बाकी बकाया", f"₹{rem:,}")
 
-                if adv_history:
-                    st.markdown("#### 📜 एडवांस पेमेंट हिस्ट्री")
-                    st.table(pd.DataFrame(adv_history))
+                # WhatsApp Message Builder
+                msg = f"*गाड़ी का हिसाब*\n" \
+                      f"गाड़ी: {bk['truck_no']} | GR: {bk['gr_no']}\n" \
+                      f"भाड़ा: ₹{total_fr:,} | मुंशी: ₹{munshiyana:,}\n" \
+                      f"एडवांस: ₹{total_adv:,}\n" \
+                      f"*बाकी: ₹{rem:,}*"
+                st.text_area("WhatsApp के लिए कॉपी करें:", msg, height=150)
 
-                st.markdown("#### 📋 Copy for WhatsApp")
-                link_text = ""
-                if gr_link: link_text += f"\n*GR कॉपी:* {gr_link}"
-                if pod_link: link_text += f"\n*POD कॉपी:* {pod_link}"
-                
-                msg = f"""*गाड़ी का हिसाब *
-----------------------------
-*गाड़ी नंबर:* {truck_no}
-*GR नंबर:* {gr_no}
-*तारीख:* {b_date}
-*कहाँ तक:* {dest}
-----------------------------
-*कुल भाड़ा:* ₹{owner_freight:,}
-*मुंशीयाना (-):* ₹{munshiyana:,}
-*कुल एडवांस दिया:* ₹{total_adv:,}
-*सेटलमेंट / कटिंग:* ₹{total_bal_paid:,}
-----------------------------
-*बाकी बकाया:* ₹{rem_balance:,}
-----------------------------{link_text}"""
-                st.text_area("नीचे से कॉपी करें:", value=msg, height=350)
-                st.info("💡 ऊपर बॉक्स से एक ही बार में हिसाब और दोनों कॉपियों (GR + POD) के लिंक कॉपी करें।")
-        else:
-            st.info("कोई बुकिंग उपलब्ध नहीं है।")
-
-    # --- TAB 4: DAILY WORK SUMMARY ---
+    # --- TAB 4: Today's Work ---
     with tab4:
-        st.markdown("### 📅 आज का काम (Booking & Owner Payments)")
-        rep_date = st.date_input("तारीख चुनें:", datetime.date.today(), key="daily_rep_date")
-        s_date = rep_date.strftime('%Y-%m-%d')
-        
-        st.write("---")
-        st.subheader("🚛 आज दिए गए एडवांस (Advances)")
-        all_adv = get_sheet_data_for_reports("Advances")
-        if all_adv:
-            today_adv = [r for r in all_adv[1:] if len(r) > 8 and r[0] == s_date]
-            if today_adv:
-                df_today_adv = pd.DataFrame(today_adv)
-                disp_adv = df_today_adv.iloc[:, [2, 3, 5, 6, 8]].copy()
-                disp_adv.columns = ["गाड़ी नंबर", "डीज़ल", "नकद (Cash)", "बैंक", "कुल एडवांस"]
-                
-                st.table(disp_adv)
-                total_adv_sum = pd.to_numeric(disp_adv["कुल एडवांस"], errors='coerce').fillna(0).sum()
-                st.success(f"कुल एडवांस दिया: ₹{int(total_adv_sum):,}")
-            else: st.info("आज कोई एडवांस नहीं दिया गया।")
-        
-        st.write("---")
-        st.subheader("🏁 आज किए गए फाइनल हिसाब (Owner Ledger Entries)")
-        all_bal = get_sheet_data_for_reports("Owner_Ledger")
-        if all_bal:
-            today_bal = [r for r in all_bal[1:] if len(r) > 5 and r[0] == s_date and "POD Link:" not in str(r[4])]
-            if today_bal:
-                df_today_bal = pd.DataFrame(today_bal)
-                disp_bal = df_today_bal.iloc[:, [1, 3, 4, 5]].copy()
-                disp_bal.columns = ["Trip ID", "गाड़ी नंबर", "विवरण", "रकम (₹)"]
-                
-                st.table(disp_bal)
-            else: st.info("आज कोई फाइनल हिसाब (Balance) नहीं हुआ।")
+        st.subheader("💸 आज के लेन-देन (Cash/Bank Outflow)")
+        t_date = st.date_input("तारीख चुनें", datetime.date.today(), key="pay_rep")
+        if st.button("🔄 पेमेंट्स लोड करें"):
+            # Combined query for Daybook and Bank Ledgers for that day
+            res = supabase.table("bank_ledgers").select("*").eq("date_val", str(t_date)).execute()
+            if res.data:
+                df_p = pd.DataFrame(res.data)
+                st.error(f"आज का कुल आउटफ्लो: ₹{abs(df_p[df_p['amount'] < 0]['amount'].sum()):,}")
+                st.dataframe(df_p, use_container_width=True)
+            else: st.info("आज कोई ट्रांजेक्शन नहीं हुआ।")
 
-    # --- TAB 5: DAILY PAYMENTS (CASH FLOW / DAYBOOK) ---
+    # --- TAB 5: GR & POD Print ---
     with tab5:
-        st.markdown("### 💸 आज की कुल पेमेंट्स (Cash / Bank Outflow)")
-        st.write("यहाँ से आप किसी भी दिन की कुल पेमेंट्स (खर्चे/लेन-देन) की रिपोर्ट निकाल सकते हैं।")
-        
-        pay_date = st.date_input("पेमेंट की तारीख चुनें:", datetime.date.today(), key="payment_date")
-        s_pay_date = pay_date.strftime('%Y-%m-%d')
-        
-        if st.button("🔄 पेमेंट्स लोड करें", type="primary"):
-            with st.spinner("डेटा निकाला जा रहा है..."):
-                # ⚠️ नोट: यह कोड मान रहा है कि आपकी रोज़ की पेमेंट्स 'Daybook' शीट में जाती हैं।
-                raw_daybook = get_sheet_data_for_reports("Daybook")
+        st.subheader("🖨️ GR और POD लिंक सर्च")
+        gr_input = st.text_input("GR नंबर दर्ज करें:")
+        if gr_input:
+            # Query by GR No
+            res_gr = supabase.table("bookings").select("*").eq("gr_no", gr_input).execute()
+            if res_gr.data:
+                r = res_gr.data[0]
+                st.success(f"गाड़ी {r['truck_no']} का डेटा मिल गया!")
+                if r['gr_link']: st.link_button("📄 GR कॉपी देखें", r['gr_link'])
                 
-                if raw_daybook:
-                    df = pd.DataFrame(raw_daybook[1:], columns=raw_daybook[0])
-                    date_col = df.columns[0]
-                    
-                    # तारीख के हिसाब से डेटा फिल्टर करना
-                    df_today = df[df[date_col] == s_pay_date]
-                    
-                    if not df_today.empty:
-                        # अमाउंट वाला कॉलम खोजना
-                        amt_col = "Amount" if "Amount" in df.columns else df.columns[-1]
-                        df_today[amt_col] = pd.to_numeric(df_today[amt_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                        
-                        # टोटल कैलकुलेट करना
-                        total_payment = df_today[amt_col].sum()
-                        
-                        st.error(f"💸 **{s_pay_date} की कुल पेमेंट्स (टोटल अमाउंट): ₹{total_payment:,.2f}**")
-                        st.write("👀 **पेमेंट्स की पूरी लिस्ट:**")
-                        st.dataframe(df_today, use_container_width=True)
-                    else:
-                        st.info(f"🟢 {s_pay_date} की तारीख में अभी तक कोई पेमेंट एंट्री नहीं हुई है।")
-                else:
-                    st.warning("⚠️ 'Daybook' नाम की शीट नहीं मिली या वह खाली है। अगर आप पेमेंट्स किसी और शीट में सेव करते हैं (जैसे 'Cash_Ledger' या 'Expenses'), तो शीट का नाम बदलें।")
-
-    # --- TAB 6: GR & POD PRINT ---
-    with tab6:
-        st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD कॉपी)")
-        st.write("GR नंबर दर्ज करें और एक ही जगह पर GR और POD दोनों की कॉपी पाएँ।")
-        
-        search_gr = st.text_input("🔍 GR नंबर टाइप करें (उदा. 5050) और Enter दबाएँ:")
-        
-        if search_gr:
-            all_bk = get_sheet_data_for_reports("Bookings")
-            found_trip = None
-            
-            if len(all_bk) > 1:
-                for r in all_bk[1:]:
-                    if len(r) > 8 and str(r[8]).strip().lower() == search_gr.strip().lower():
-                        found_trip = r
-                        break
-            
-            if found_trip:
-                sel_id = found_trip[14]
-                st.success(f"✅ गाड़ी {found_trip[6]} (कहाँ तक: {found_trip[7]}) का डेटा मिल गया!")
-                
-                gr_link = None
-                if len(found_trip) > 16 and "http" in str(found_trip[16]):
-                    gr_link = str(found_trip[16]).strip()
-                    
-                pod_link = None
-                owner_data = get_sheet_data_for_reports("Owner_Ledger")
-                if owner_data:
-                    for r in owner_data[1:]:
-                        if len(r) > 4 and r[1].strip() == sel_id and "POD Link:" in str(r[4]):
-                            pod_link = str(r[4]).replace("POD Link:", "").strip()
-                            break
-                
-                st.write("---")
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📄 GR (बिल्टी) कॉपी")
-                    if gr_link:
-                        st.link_button("🖨️ GR कॉपी प्रिंट करें / देखें", gr_link, type="primary", use_container_width=True)
-                    else:
-                        st.warning("⚠️ GR कॉपी अभी अपलोड नहीं है।")
-                        
-                with col2:
-                    st.subheader("🏁 POD (रिसीविंग) कॉपी")
-                    if pod_link:
-                        st.link_button("🖨️ POD कॉपी प्रिंट करें / देखें", pod_link, type="primary", use_container_width=True)
-                    else:
-                        st.warning("⚠️ POD कॉपी अभी अपलोड नहीं है।")
-            else:
-                st.error("❌ इस GR नंबर से कोई गाड़ी नहीं मिली। कृपया सही नंबर टाइप करें।")
+                # Search for POD in ledger
+                res_pod = supabase.table("owner_ledger").select("description").eq("trip_id", r['trip_id']).ilike("description", "%POD Link%").execute()
+                if res_pod.data:
+                    url = res_pod.data[0]['description'].replace("POD Link:", "").strip()
+                    st.link_button("🏁 POD कॉपी देखें", url)
+            else: st.error("GR नंबर नहीं मिला।")
