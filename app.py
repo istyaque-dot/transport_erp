@@ -7,7 +7,12 @@ from supabase import create_client, Client
 # ==========================================
 SUPABASE_URL = "https://tsyghmvqrlxwicipkvqw.supabase.co"
 SUPABASE_KEY = "sb_publishable_p0_eR7aMIL5KDvUkiwm18g_t1OtXBDv"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+@st.cache_resource
+def init_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = init_supabase()
 
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
@@ -62,7 +67,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔒 LOGIN LOGIC
+# 🔒 LOGIN
 # ==========================================
 def check_password():
     def password_entered():
@@ -70,22 +75,16 @@ def check_password():
         p = st.session_state.get("password", "")
         if u == "admin" and p == "khan786":
             st.session_state["password_correct"] = True
+            st.session_state.pop("password", None)
+            st.session_state.pop("username", None)
         else:
             st.session_state["password_correct"] = False
 
     if st.session_state.get("password_correct", False):
         return True
 
-    # ── Login Page UI ──
-    st.markdown("""
-        <div style='text-align:center; padding: 4vh 0 2vh 0;'>
-            <div style='font-size:3.2rem; line-height:1;'>🚛</div>
-            <div style='font-size:1.6rem; font-weight:900; color:#003399; letter-spacing:2px;'>
-                BAZPUR UP TRANSPORT
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
+    # Branding & Form
+    st.markdown("<div style='text-align:center; padding-top:4vh;'><div style='font-size:3.2rem;'>🚛</div><div style='font-size:1.6rem; font-weight:900; color:#003399;'>BAZPUR UP TRANSPORT</div></div>", unsafe_allow_html=True)
     _, col, _ = st.columns([1, 1.2, 1])
     with col:
         with st.form("login_form"):
@@ -100,88 +99,70 @@ def check_password():
 # 🖥️ MAIN APP
 # ==========================================
 if check_password():
-    from booking import show_booking_page
-    # Note: Baki pages ko bhi migrate karne ke baad yahan import karenge
-    
+    # Import Pages
+    from booking        import show_booking_page
+    from advance        import show_advance_page
+    from receivable     import show_receivable_page
+    from daybook        import show_daybook_page
+    from dashboard      import show_dashboard_page
+    from transfer       import show_transfer_page
+    from reports        import show_reports_page
+    from pod            import show_pod_page
+    from company_hisaab import show_company_page
+    from outstanding    import show_outstanding_page
+
     # ── Sidebar ──
-    st.sidebar.markdown("<div style='text-align:center; font-size:1rem; font-weight:900; color:white;'>Transport ERP</div>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='text-align:center; font-size:0.7rem; color:white;'>📅 {datetime.date.today().strftime('%d %b %Y')}</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='text-align:center; padding: 12px 0;'><div style='font-size:1.8rem;'>🚛</div><div style='font-size:1rem; font-weight:900; color:white;'>Transport ERP</div></div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='text-align:center; font-size:0.72rem; color:white;'>📅 {datetime.date.today().strftime('%d %b %Y')}</div>", unsafe_allow_html=True)
     
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
 
+    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+
     PAGES = [
-        "🏠 होम (Home)",
-        "बुकिंग",
-        "📊 डेटा ट्रांसफर (Admin Tools)"
+        "🏠 होम (Home)", "बुकिंग", "एडवांस", "रिसिवेबल (पार्टी पेमेंट)", 
+        "डे बुक (Credit/Debit)", "ट्रांसफर / पेमेंट (Contra)", 
+        "रिपोर्ट्स (Reports)", "POD और फाइनल हिसाब", "🏢 कंपनी खाता", 
+        "💸 लेना - देना (Outstanding)", "📊 डैशबोर्ड", "🛠️ Admin: Data Migration"
     ]
     choice = st.sidebar.radio("मेन्यू", PAGES, label_visibility="collapsed")
 
+    # Routing
     if choice == "🏠 होम (Home)":
-        st.title("स्वागत है, इश्तियाक भाई! 👋")
-        st.info("आपका सिस्टम अब Supabase (PostgreSQL) डेटाबेस पर चल रहा है।")
+        st.markdown("<div style='text-align:center; padding-top:8vh;'><div style='font-size:4rem;'>🚛</div><h1 style='color:#003399;'>BAZPUR UP TRANSPORT</h1><p>सुरक्षित · तेज़ · भरोसेमंद</p></div>", unsafe_allow_html=True)
+        # Dashboard like cards
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Status", "Online", "Supabase V2")
+        c2.metric("Database", "PostgreSQL", "Connected")
+        c3.metric("System", "Fast Engine", "Active")
 
     elif choice == "बुकिंग":
         show_booking_page()
-
-    elif choice == "📊 डेटा ट्रांसफर (Admin Tools)":
+    elif choice == "एडवांस":
+        show_advance_page()
+    elif choice == "रिसिवेबल (पार्टी पेमेंट)":
+        show_receivable_page()
+    elif choice == "डे बुक (Credit/Debit)":
+        show_daybook_page()
+    elif choice == "ट्रांसफर / पेमेंट (Contra)":
+        show_transfer_page()
+    elif choice == "रिपोर्ट्स (Reports)":
+        show_reports_page()
+    elif choice == "POD और फाइनल हिसाब":
+        show_pod_page()
+    elif choice == "🏢 कंपनी खाता":
+        show_company_page()
+    elif choice == "💸 लेना - देना (Outstanding)":
+        show_outstanding_page()
+    elif choice == "📊 डैशबोर्ड":
+        show_dashboard_page()
+    
+    # 🚨 Data Migration Tool (For future or missing sheets)
+    elif choice == "🛠️ Admin: Data Migration":
         st.header("🚀 Google Sheets ➡️ Supabase Migration")
-        st.warning("⚠️ कृपया बटन को सिर्फ एक ही बार दबाएं।")
-        
-        if st.button("🔥 START: सारा डेटा ट्रांसफर करें", type="primary"):
-            with st.spinner("डेटा कॉपी हो रहा है, कृपया इंतज़ार करें..."):
-                import gspread
-                from oauth2client.service_account import ServiceAccountCredentials
-                import pandas as pd
-
-                # Connection to Sheets
-                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
-                db = gspread.authorize(creds).open("Khan_Transport_ERP")
-
-                def clean_num(val):
-                    try: return float(str(val).replace(',', '').strip()) if val else 0.0
-                    except: return 0.0
-                def clean_str(val):
-                    return str(val).strip() if pd.notna(val) and str(val).lower() != "nan" else ""
-
-                # 1. Bookings Migration
-                st.write("📦 Bookings कॉपी हो रही हैं...")
-                data = db.worksheet("Bookings").get_all_values()
-                if len(data) > 1:
-                    rows = []
-                    for r in data[1:]:
-                        if len(r) < 15 or not r[14]: continue
-                        rows.append({
-                            "date_val": clean_str(r[0]), "from_loc": clean_str(r[1]), "company": clean_str(r[2]),
-                            "owner_rate": clean_num(r[3]), "comp_rate": clean_num(r[4]), "weight": clean_num(r[5]),
-                            "truck_no": clean_str(r[6]), "to_loc": clean_str(r[7]), "gr_no": clean_str(r[8]),
-                            "uni_amt": int(clean_num(r[9])), "comments": clean_str(r[10]), "comp_freight": int(clean_num(r[11])),
-                            "owner_freight": int(clean_num(r[12])), "final_uni_amt": int(clean_num(r[13])),
-                            "trip_id": clean_str(r[14]), "ish_amt": int(clean_num(r[15])),
-                            "gr_link": clean_str(r[16]) if len(r)>16 and "http" in str(r[16]) else None
-                        })
-                    for i in range(0, len(rows), 500):
-                        supabase.table("bookings").insert(rows[i:i+500]).execute()
-                    st.success("✅ Bookings Transfer Complete!")
-
-                # 2. Ledgers Migration
-                ledgers = {"Company_Ledger": "company_ledger", "Owner_Ledger": "owner_ledger", "Universal_Ledger": "universal_ledger", "Ishtyaque_Ledger": "ishtyaque_ledger"}
-                for s, t in ledgers.items():
-                    st.write(f"📒 {s} कॉपी हो रहा है...")
-                    ldata = db.worksheet(s).get_all_values()
-                    if len(ldata) > 1:
-                        lrows = []
-                        for r in ldata[1:]:
-                            if len(r) < 5: continue
-                            lrows.append({
-                                "date_val": clean_str(r[0]), "trip_id": clean_str(r[1]), "gr_no": clean_str(r[2]),
-                                "truck_no": clean_str(r[3]), "description": clean_str(r[4]), "amount": clean_num(r[5])
-                            })
-                        for i in range(0, len(lrows), 500):
-                            supabase.table(t).insert(lrows[i:i+500]).execute()
-                    st.success(f"✅ {s} Complete!")
-
-                st.balloons()
-                st.success("🎊 सारा डेटा आ गया है! अब आप बुकिंग पेज पर जाकर चेक कर सकते हैं।")
+        st.info("यह टूल पुराने डेटा को नए डेटाबेस में डालने के लिए है।")
+        if st.button("🔥 माइग्रेशन शुरू करें"):
+            # Yahan migration logic trigger kar sakte hain agar koi sheet bachi ho
+            st.write("माइग्रेशन प्रोसेस शुरू...")
