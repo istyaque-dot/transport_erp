@@ -155,38 +155,45 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # ==========================================
 
 def show_booking_page():
-    # 🟢 11-inch Mac के लिए Compact CSS
+    # 🟢 ZERO BLANK SPACE CSS (For 11-inch Mac)
     st.markdown("""
         <style>
-            /* टॉप पैडिंग कम करना */
-            .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-            h2 { font-size: 1.4rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
-            h3 { font-size: 1.1rem !important; margin-bottom: 5px !important; }
-            h4 { font-size: 1rem !important; margin-bottom: 2px !important; color: #003399; }
+            /* मेन कंटेनर की पैडिंग हटाना */
+            .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.3rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1rem !important; margin-bottom: 0px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 0.95rem !important; margin-bottom: 0px !important; color: #003399; }
             
-            /* फॉर्म के अंदर की स्पेसिंग और फॉन्ट साइज कम करना */
-            div[data-testid="stForm"] > div > div { gap: 0.2rem !important; }
-            .stTextInput > div > div > input, .stNumberInput > div > div > input, .stSelectbox > div > div > select { 
-                padding-top: 0.1rem; padding-bottom: 0.1rem; min-height: 2.1rem; font-size: 0.9rem;
-            }
-            label { font-size: 0.85rem !important; font-weight: 600 !important; margin-bottom: 0.1rem !important; }
+            /* फॉर्म के अंदर की स्पेसिंग और लाइनों के बीच का गैप खत्म करना */
+            div[data-testid="stForm"] { padding: 15px !important; margin-bottom: 5px !important; }
+            div[data-testid="stVerticalBlock"] { gap: 0rem !important; } /* एकदम सटाने के लिए */
+            div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
             
-            /* कार्ड्स का लुक कॉम्पैक्ट करना */
-            div[data-testid="metric-container"] {
-                background-color: #ffffff; border: 1px solid #e0e0e0;
-                padding: 5px 10px; border-radius: 8px;
-                box-shadow: 0px 2px 4px rgba(0,0,0,0.05);
+            /* इनपुट बॉक्स को स्लिम करना */
+            .stTextInput > div > div > input, 
+            .stNumberInput > div > div > input, 
+            .stSelectbox > div > div > select { 
+                padding-top: 0px !important; 
+                padding-bottom: 0px !important; 
+                min-height: 1.8rem !important; 
+                font-size: 0.85rem !important;
             }
-            @media (prefers-color-scheme: dark) {
-                div[data-testid="metric-container"] { background-color: #1e1e1e; border-color: #333; }
-            }
-            div[data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-            hr { margin: 0.5em 0px !important; }
             
-            /* GR अपलोड बॉक्स का डिज़ाइन */
+            /* लेबल्स (Label) और बॉक्स के बीच की जगह खत्म करना */
+            label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: -5px !important; padding-bottom: 0px !important; }
+            
+            /* अलर्ट और सक्सेस मैसेज बॉक्स को छोटा करना */
+            div[data-testid="stAlert"] { padding: 5px 10px !important; min-height: 30px !important; margin-top: 5px !important; margin-bottom: 5px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.85rem !important; margin: 0px !important; }
+            
+            hr { margin: 0.3em 0px !important; }
+            
+            /* GR अपलोड बॉक्स का कॉम्पैक्ट डिज़ाइन */
             .gr-box {
-                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; height: 100%;
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; height: 100%; margin-top: 0px;
             }
+            .stButton > button { min-height: 2rem !important; padding: 0px 10px !important; }
+            .stFileUploader { margin-bottom: -10px !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -235,7 +242,6 @@ def show_booking_page():
                 mc3.metric("TDS (1%)", f"₹{tds:,}")
                 mc4.metric("10% रोक", f"₹{hold_10:,}")
                 
-                st.markdown("<br>", unsafe_allow_html=True)
                 submitted = st.form_submit_button("➡️ सेव करने के लिए आगे बढ़ें", use_container_width=True)
                 
                 if submitted:
@@ -288,7 +294,6 @@ def show_booking_page():
 
     # --- TAB 2: EDIT BOOKING (SIDE-BY-SIDE LAYOUT) ---
     with tab2:
-        st.markdown("### ✏️ पुरानी बुकिंग में सुधार")
         df_trips = get_all_trips()
         if not df_trips.empty:
             df_last = df_trips.tail(50).iloc[::-1]
@@ -301,16 +306,15 @@ def show_booking_page():
                 except: pass
             
             selected_label = st.selectbox("एडिट करने के लिए गाड़ी चुनें:", ["चुनें..."] + labels)
-            st.divider()
+            st.markdown("<hr style='margin: 0.5em 0px;'>", unsafe_allow_html=True)
             
             if selected_label != "चुनें...":
                 idx = labels.index(selected_label)
                 selected_trip_id = trip_ids[idx]
                 row_data = df_last[df_last.iloc[:, 14].astype(str) == selected_trip_id].iloc[0]
                 
-                # 🟢 आमने-सामने (Side-by-Side) लेआउट
-                # col_edit (70% width), col_gr (30% width)
-                col_edit, col_gr = st.columns([2.2, 1], gap="large")
+                # 🟢 आमने-सामने (Side-by-Side) लेआउट, gap='small' कर दिया गया है
+                col_edit, col_gr = st.columns([2.2, 1], gap="small")
                 
                 # ------ LEFT SIDE: EDIT FORM ------
                 with col_edit:
@@ -326,7 +330,6 @@ def show_booking_page():
                         current_gr = s_str(row_data.iloc[8])
                         if current_gr == "N/A": current_gr = ""
 
-                        # 3-कॉलम का ग्रिड ताकि फॉर्म छोटा रहे
                         e1, e2, e3 = st.columns(3)
                         with e1: e_date = st.text_input("तारीख", s_str(row_data.iloc[0]))
                         with e2: e_truck = st.text_input("गाड़ी नंबर", s_str(row_data.iloc[6]))
@@ -380,7 +383,7 @@ def show_booking_page():
                         st.success("✅ GR सुरक्षित है।")
                         st.link_button("📥 GR कॉपी देखें", existing_gr_url, type="secondary", use_container_width=True)
                     
-                    gr_files = st.file_uploader("GR की फोटो (PDF/JPG)", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key=f"gr_up_{selected_trip_id}")
+                    gr_files = st.file_uploader("GR की फोटो (PDF/JPG)", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key=f"gr_up_{selected_trip_id}", label_visibility="collapsed")
                     
                     if st.button("🚀 फाइल अपलोड करें", type="primary", use_container_width=True):
                         if gr_files:
