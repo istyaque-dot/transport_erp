@@ -12,7 +12,7 @@ import io
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
 
 # ==========================================
-# 🗄️ DATABASE — Unchanged
+# 🗄️ DATABASE
 # ==========================================
 
 @st.cache_resource(ttl=3000)
@@ -39,20 +39,44 @@ def upload_to_drive(file_bytes, file_name):
         return result if "Error" not in result else None
     except: return None
 
+# 🟢 YAHAN A4 SIZE PDF KA LOGIC ADD KIYA GAYA HAI
 def prepare_pod_file(uploaded_files):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
         return uploaded_files[0].read(), "pdf"
-    images = []
+        
+    # A4 Size Dimensions (300 DPI for high quality printing)
+    A4_WIDTH = 2480
+    A4_HEIGHT = 3508
+    
+    a4_images = []
     for file in uploaded_files:
         if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
             img = Image.open(file)
             if img.mode != 'RGB': img = img.convert('RGB')
-            images.append(img)
-    if images:
+            
+            # फोटो को A4 साइज़ के हिसाब से रीसाइज़ करें
+            try:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
+            except AttributeError:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
+            
+            # एक एकदम सफेद (White) A4 साइज़ का पन्ना बनाएं
+            a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
+            
+            # ऑरिजिनल फोटो को सफेद पन्ने के बिल्कुल बीचों-बीच (Center) चिपका दें
+            x_offset = (A4_WIDTH - img.width) // 2
+            y_offset = (A4_HEIGHT - img.height) // 2
+            a4_canvas.paste(img, (x_offset, y_offset))
+            
+            a4_images.append(a4_canvas)
+            
+    if a4_images:
         pdf_bytes = io.BytesIO()
-        if len(images) == 1: images[0].save(pdf_bytes, format="PDF")
-        else: images[0].save(pdf_bytes, format="PDF", save_all=True, append_images=images[1:])
+        if len(a4_images) == 1: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300)
+        else: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300, save_all=True, append_images=a4_images[1:])
         return pdf_bytes.getvalue(), "pdf"
     return None, None
 
@@ -140,7 +164,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest,
     except: return False
 
 # ==========================================
-# 🎨 CSS (MICRO-ADJUSTMENTS APPLIED)
+# 🎨 CSS
 # ==========================================
 
 BOOKING_CSS = """
@@ -175,7 +199,7 @@ BOOKING_CSS = """
         background: #ffffff !important;
         border: 1px solid #e2e8f0 !important;
         border-radius: 12px !important;
-        padding: 16px 20px !important; /* Halka sa kam kiya */
+        padding: 16px 20px !important;
         box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
     }
 
@@ -185,7 +209,7 @@ BOOKING_CSS = """
     h4 { font-size: 1rem !important; margin-bottom: 4px !important; color: #003399 !important; }
 
     /* Spacing */
-    div[data-testid="stVerticalBlock"] { gap: 0.45rem !important; } /* Mamuli sa kam kiya */
+    div[data-testid="stVerticalBlock"] { gap: 0.45rem !important; }
     div[data-testid="stHorizontalBlock"] { gap: 0.55rem !important; }
 
     /* Inputs */
@@ -194,7 +218,7 @@ BOOKING_CSS = """
         border-radius: 7px !important;
         border: 1px solid #cbd5e1 !important;
         padding: 4px 10px !important;
-        min-height: 1.9rem !important; /* Halka sa dabaya */
+        min-height: 1.9rem !important;
         font-size: 0.88rem !important;
         background: #fafafa !important;
     }
@@ -207,7 +231,7 @@ BOOKING_CSS = """
     .stSelectbox > div > div {
         border-radius: 7px !important;
         border: 1px solid #cbd5e1 !important;
-        min-height: 1.9rem !important; /* Halka sa dabaya */
+        min-height: 1.9rem !important;
         font-size: 0.88rem !important;
     }
 
@@ -216,13 +240,13 @@ BOOKING_CSS = """
         font-size: 0.8rem !important;
         font-weight: 700 !important;
         color: #374151 !important;
-        margin-bottom: 0px !important; /* Chipkaya thoda */
+        margin-bottom: 0px !important;
     }
 
     /* Buttons */
     .stButton > button {
         border-radius: 8px !important;
-        min-height: 1.9rem !important; /* Halka sa dabaya */
+        min-height: 1.9rem !important;
         font-size: 0.88rem !important;
         font-weight: 600 !important;
         padding: 2px 14px !important;
@@ -572,7 +596,7 @@ def show_booking_page():
                         """, unsafe_allow_html=True)
 
                     gr_files = st.file_uploader(
-                        "GR फोटो", type=["pdf", "jpg", "jpeg", "png"],
+                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png"],
                         accept_multiple_files=True,
                         key=f"gr_up_{selected_trip_id}",
                         label_visibility="collapsed"
@@ -582,7 +606,7 @@ def show_booking_page():
 
                     if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True):
                         if gr_files:
-                            with st.spinner("GR Drive पर जा रही है..."):
+                            with st.spinner("GR (A4 PDF) Drive पर जा रही है..."):
                                 final_bytes, file_ext = prepare_pod_file(gr_files)
                                 if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
@@ -592,7 +616,7 @@ def show_booking_page():
                                                   else f"https://drive.google.com/file/d/{d_id}/view")
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
                                             st.cache_data.clear()
-                                            st.success("✅ GR सेव हो गई!")
+                                            st.success("✅ A4 साइज़ GR सेव हो गई!")
                                             time.sleep(1.5)
                                             st.rerun()
                                         else: st.error("❌ Link save फेल!")
