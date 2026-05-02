@@ -124,42 +124,45 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
 # 🖥️ USER INTERFACE
 # ==========================================
 def show_pod_page():
-    # 🟢 11-INCH MAC COMPACT & BALANCED CSS
+    # 🟢 ULTRA-COMPACT CSS FOR 11-INCH MAC
     st.markdown("""
         <style>
-            .block-container { padding-top: 1.5rem !important; padding-bottom: 1rem !important; max-width: 98% !important; }
-            h2 { font-size: 1.4rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
-            h3 { font-size: 1.1rem !important; margin-bottom: 5px !important; padding-bottom: 0px !important;}
-            h4 { font-size: 1.05rem !important; margin-bottom: 8px !important; color: #003399; }
+            /* मेन कंटेनर की पैडिंग और गैप को बहुत कम किया गया है */
+            .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.3rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1rem !important; margin-top: 5px !important; margin-bottom: 2px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 0.95rem !important; margin-top: 2px !important; margin-bottom: 4px !important; color: #003399; }
             
-            div[data-testid="stVerticalBlock"] { gap: 0.6rem !important; } 
-            div[data-testid="stHorizontalBlock"] { gap: 0.6rem !important; }
+            div[data-testid="stVerticalBlock"] { gap: 0.3rem !important; } 
+            div[data-testid="stHorizontalBlock"] { gap: 0.4rem !important; }
             
             .stTextInput > div > div > input, 
             .stNumberInput > div > div > input, 
             .stSelectbox > div > div > select { 
-                padding-top: 4px !important; padding-bottom: 4px !important; min-height: 2.2rem !important; font-size: 0.9rem !important;
+                padding-top: 2px !important; padding-bottom: 2px !important; min-height: 1.8rem !important; font-size: 0.85rem !important;
             }
             
-            label { font-size: 0.85rem !important; font-weight: 600 !important; margin-bottom: 2px !important; padding-bottom: 0px !important; }
-            div[data-testid="stAlert"] { padding: 8px 12px !important; min-height: 35px !important; margin-top: 8px !important; margin-bottom: 8px !important;}
-            div[data-testid="stAlert"] p { font-size: 0.9rem !important; margin: 0px !important; }
+            label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: 0px !important; padding-bottom: 0px !important; }
+            div[data-testid="stAlert"] { padding: 4px 10px !important; min-height: 28px !important; margin-top: 2px !important; margin-bottom: 2px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.85rem !important; margin: 0px !important; }
             
             div[data-testid="metric-container"] {
-                background-color: #ffffff; border: 1px solid #e0e0e0; padding: 5px 10px; border-radius: 8px; box-shadow: 0px 2px 4px rgba(0,0,0,0.05);
+                background-color: transparent !important; border: none !important; box-shadow: none !important; padding: 2px 5px !important; margin-bottom: 0px !important;
             }
-            @media (prefers-color-scheme: dark) {
-                div[data-testid="metric-container"] { background-color: #1e1e1e; border-color: #333; }
-            }
-            div[data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+            div[data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+            div[data-testid="stMetricLabel"] { font-weight: bold !important; color: #333 !important;}
             
-            hr { margin: 0.6em 0px !important; }
-            .stButton > button { min-height: 2.2rem !important; padding: 2px 10px !important; }
+            hr { margin: 0.2em 0px !important; border-color: #ddd !important; }
+            .stButton > button { min-height: 1.8rem !important; padding: 0px 10px !important; font-size: 0.85rem !important;}
             
-            /* Custom Box Design for Side-by-Side layout */
+            /* Custom Box को और पतला किया गया है */
             .custom-box {
-                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; height: 100%; margin-top: 0px;
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; height: 100%; margin-top: 0px;
             }
+            
+            /* फाइल अपलोडर के फालतू हिस्से को छिपाना/कम करना */
+            .stFileUploader section { padding: 8px !important; min-height: auto !important; }
+            .stFileUploader label { display: none !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -172,10 +175,10 @@ def show_pod_page():
         # पुरानी और फाइनल हो चुकी गाड़ियों को लिस्ट से हटाना
         df_pending = df_owner[~df_owner.iloc[:, 4].astype(str).str.contains("Shortage|Extra|Detention|Final|POD Link", case=False, na=False)].iloc[::-1]
         
-        st.write("---")
+        st.markdown("<hr>", unsafe_allow_html=True)
         
         # 🟢 स्मार्ट GR सर्च सिस्टम
-        col_s1, col_s2 = st.columns([1, 2])
+        col_s1, col_s2 = st.columns([1, 2.5])
         with col_s1:
             search_gr = st.text_input("🔍 GR नंबर से खोजें:")
             
@@ -189,7 +192,7 @@ def show_pod_page():
         with col_s2:
             selected = st.selectbox("📝 नीचे लिस्ट से गाड़ी चुनें", ["चुनें..."] + choices, label_visibility="collapsed")
         
-        st.write("---")
+        st.markdown("<hr>", unsafe_allow_html=True)
         
         if selected != "चुनें...":
             parts = selected.split(" | ")
@@ -221,19 +224,15 @@ def show_pod_page():
                 
                 if existing_pod_url:
                     st.success("📄 इस गाड़ी की बिल्टी (POD) सिस्टम में सेव है।")
-                    st.link_button("📥 सेव की गई बिल्टी (POD) देखें / डाउनलोड करें", existing_pod_url, type="secondary")
+                    st.link_button("📥 सेव की गई बिल्टी (POD) देखें", existing_pod_url, type="secondary")
                 
-                st.divider()
+                st.markdown("<hr>", unsafe_allow_html=True)
 
                 if current_bal <= 0:
-                    # हिसाब क्लियर है, सिर्फ POD का ऑप्शन दिखाओ
-                    st.success(f"✅ इस गाड़ी का फुल एंड फाइनल हिसाब हो चुका है! (बैलेंस: ₹{current_bal:,})")
-                    st.info(f"कुल भाड़ा (मुंशीयाना हटाकर): ₹{owner_freight - munshiyana:,} | कुल पेमेंट (एडवांस + फाइनल): ₹{total_adv:,}")
-                    
+                    st.success(f"✅ हिसाब पूरा हो चुका है! (बैलेंस: ₹{current_bal:,})")
                     st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
                     st.markdown("#### 📄 नई बिल्टी (POD) अपलोड")
-                    st.write("अगर बिल्टी में कई पन्ने हैं, तो एक साथ फोटो सेलेक्ट करें।")
-                    up_files = st.file_uploader("बिल्टी के पेज चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only_upload", label_visibility="collapsed")
+                    up_files = st.file_uploader("बिल्टी के पेज चुनें", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only_upload")
                     if st.button("🚀 सिर्फ POD अपलोड करें", type="primary"):
                         if up_files:
                             with st.spinner("बिल्टी सेव हो रही है..."):
@@ -255,14 +254,13 @@ def show_pod_page():
                 else:
                     st.warning(f"💰 **अभी का बाकी बैलेंस: ₹{current_bal:,}**")
                     
-                    # 🟢 SIDE-BY-SIDE LAYOUT FOR POD AND SETTLEMENT
-                    col_pod, col_pay = st.columns([1, 1.3], gap="small")
+                    # 🟢 SIDE-BY-SIDE LAYOUT
+                    col_pod, col_pay = st.columns([1, 1.4], gap="small")
                     
                     # --- PART 1: सिर्फ POD अपलोड (Left Box) ---
                     with col_pod:
                         st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
                         st.markdown("#### 📄 1. बिल्टी (POD) अपलोड")
-                        st.write("सिर्फ बिल्टी सेव करनी है, तो यहाँ से करें:")
                         up_files = st.file_uploader("बिल्टी की फोटो", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_upload_separate")
                         if st.button("🚀 सिर्फ बिल्टी सेव करें", use_container_width=True):
                             if up_files:
@@ -288,15 +286,15 @@ def show_pod_page():
                         st.markdown("#### 💳 2. फाइनल पेमेंट (Settlement)")
                         
                         r1, r2 = st.columns(2)
-                        with r1: shortage = st.number_input("Shortage / कटी (- ₹)", min_value=0, step=50)
-                        with r2: extra_pay = st.number_input("Detention / Extra (+ ₹)", min_value=0, step=100)
+                        with r1: shortage = st.number_input("Shortage/कटी (- ₹)", min_value=0, step=50)
+                        with r2: extra_pay = st.number_input("Detention/Extra (+ ₹)", min_value=0, step=100)
                         
                         r3, r4 = st.columns(2)
                         with r3: adj_remark = st.text_input("कारण (Remarks)", value="Final Settlement")
                         with r4: pay_mode = st.selectbox("पेमेंट बैंक/कैश?", ["N/A", "Cash", "canara bank 311", "canara bank 41", "bob"])
                         
                         final_payable = current_bal - shortage + extra_pay
-                        st.error(f"💵 **अब हाथ में देने वाली फाइनल रकम: ₹{final_payable:,}**")
+                        st.error(f"💵 **अब हाथ में देने वाली रकम: ₹{final_payable:,}**")
                         
                         if st.button("✅ फुल एंड फाइनल पेमेंट करें", type="primary", use_container_width=True):
                             if pay_mode == "N/A" and final_payable > 0:
