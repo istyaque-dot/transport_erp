@@ -124,45 +124,50 @@ def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank
 # 🖥️ USER INTERFACE
 # ==========================================
 def show_pod_page():
-    # 🟢 ULTRA-COMPACT CSS FOR 11-INCH MAC
+    # 🟢 MICRO-ADJUSTMENT CSS FOR 11-INCH MAC (ZERO WASTED SPACE)
     st.markdown("""
         <style>
-            /* मेन कंटेनर की पैडिंग और गैप को बहुत कम किया गया है */
-            .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; max-width: 98% !important; }
-            h2 { font-size: 1.3rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
-            h3 { font-size: 1rem !important; margin-top: 5px !important; margin-bottom: 2px !important; padding-bottom: 0px !important;}
-            h4 { font-size: 0.95rem !important; margin-top: 2px !important; margin-bottom: 4px !important; color: #003399; }
+            /* मेन कंटेनर की पैडिंग को एकदम मिनिमम किया गया है */
+            .block-container { padding-top: 0.5rem !important; padding-bottom: 0.1rem !important; max-width: 98% !important; }
+            h2 { font-size: 1.25rem !important; margin-bottom: 0 !important; padding-bottom: 0 !important; }
+            h3 { font-size: 1rem !important; margin-top: 2px !important; margin-bottom: 0px !important; padding-bottom: 0px !important;}
+            h4 { font-size: 0.95rem !important; margin-top: 0px !important; margin-bottom: 2px !important; color: #003399; }
             
-            div[data-testid="stVerticalBlock"] { gap: 0.3rem !important; } 
-            div[data-testid="stHorizontalBlock"] { gap: 0.4rem !important; }
+            /* गैप को और कम कर दिया गया */
+            div[data-testid="stVerticalBlock"] { gap: 0.2rem !important; } 
+            div[data-testid="stHorizontalBlock"] { gap: 0.3rem !important; }
             
+            /* इनपुट फील्ड्स को एकदम स्लिम कर दिया है */
             .stTextInput > div > div > input, 
             .stNumberInput > div > div > input, 
             .stSelectbox > div > div > select { 
-                padding-top: 2px !important; padding-bottom: 2px !important; min-height: 1.8rem !important; font-size: 0.85rem !important;
+                padding-top: 0px !important; padding-bottom: 0px !important; min-height: 1.6rem !important; font-size: 0.85rem !important;
             }
             
-            label { font-size: 0.8rem !important; font-weight: 600 !important; margin-bottom: 0px !important; padding-bottom: 0px !important; }
-            div[data-testid="stAlert"] { padding: 4px 10px !important; min-height: 28px !important; margin-top: 2px !important; margin-bottom: 2px !important;}
-            div[data-testid="stAlert"] p { font-size: 0.85rem !important; margin: 0px !important; }
+            label { font-size: 0.75rem !important; font-weight: 600 !important; margin-bottom: 0px !important; padding-bottom: 0px !important; }
+            div[data-testid="stAlert"] { padding: 2px 8px !important; min-height: 24px !important; margin-top: 0px !important; margin-bottom: 0px !important;}
+            div[data-testid="stAlert"] p { font-size: 0.8rem !important; margin: 0px !important; }
             
+            /* मेट्रिक बॉक्स (पासबुक) को बिना बैकग्राउंड का कर दिया ताकि जगह बचे */
             div[data-testid="metric-container"] {
-                background-color: transparent !important; border: none !important; box-shadow: none !important; padding: 2px 5px !important; margin-bottom: 0px !important;
+                background-color: transparent !important; border: none !important; box-shadow: none !important; padding: 0px 5px !important; margin-bottom: 0px !important;
             }
-            div[data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+            div[data-testid="stMetricValue"] { font-size: 1rem !important; }
             div[data-testid="stMetricLabel"] { font-weight: bold !important; color: #333 !important;}
             
-            hr { margin: 0.2em 0px !important; border-color: #ddd !important; }
-            .stButton > button { min-height: 1.8rem !important; padding: 0px 10px !important; font-size: 0.85rem !important;}
+            /* लाइनों को पतला किया गया है */
+            hr { margin: 0.1em 0px !important; border-color: #ddd !important; }
+            .stButton > button { min-height: 1.6rem !important; padding: 0px 8px !important; font-size: 0.85rem !important;}
             
-            /* Custom Box को और पतला किया गया है */
+            /* Custom Box को 8px की पैडिंग दी है */
             .custom-box {
-                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; height: 100%; margin-top: 0px;
+                background-color: #f8f9fa; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; height: 100%; margin-top: 0px;
             }
             
-            /* फाइल अपलोडर के फालतू हिस्से को छिपाना/कम करना */
-            .stFileUploader section { padding: 8px !important; min-height: auto !important; }
+            /* 🟢 फाइल अपलोडर के फालतू हिस्से (जैसे: 200MB limit limit text) को गायब कर दिया है */
+            .stFileUploader section { padding: 4px !important; min-height: auto !important; }
             .stFileUploader label { display: none !important; }
+            .stFileUploader small { display: none !important; } /* Hide the '200MB per file' text */
         </style>
     """, unsafe_allow_html=True)
 
