@@ -241,4 +241,4 @@ def show_transfer_page():
 # अगर आप इसे अकेले टेस्ट करना चाहें तो:
 # if __name__ == "__main__":
 #     st.set_page_config(layout="wide")
-#     show_transfer_page(). isko bhi
+#     show_transfer_page(). 
