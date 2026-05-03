@@ -54,102 +54,31 @@ def check_password():
 # ==========================================
 # 🔄 MASTER SYNC FUNCTION (All 15 Tables)
 # ==========================================
+# ==========================================
+# 🔄 MASTER SYNC FUNCTION (Anti-NaN Version)
+# ==========================================
 def sync_data_to_supabase():
     try:
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से सारी टेबल्स का डेटा पढ़ा जा रहा है... कृपया प्रतीक्षा करें।")
         
+        # (आपका SYNC_CONFIG वाला हिस्सा बिल्कुल वैसा ही रहेगा, उसे नहीं बदलना है)
         SYNC_CONFIG = {
-            "Bookings": {
-                "table": "bookings",
-                "sheet_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"],
-                "db_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"],
-                "num_cols": ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
-            },
-            "Advances": {
-                "table": "advances",
-                "sheet_cols": ["Date", "Trip_ID", "truck_no", "Diesel_Amt", "Pump_Name", "Cash_Amt", "Bank_Amt", "Bank_Account", "Total_Advance"],
-                "db_cols": ["date", "trip_id", "truck_no", "diesel_amt", "pump_name", "cash_amt", "bank_amt", "bank_account", "total_advance"],
-                "num_cols": ["diesel_amt", "cash_amt", "bank_amt", "total_advance"]
-            },
-            "Owner_Ledger": {
-                "table": "owner_ledger",
-                "sheet_cols": ["date", "trip number", "gr number", "truck number", "destination", "freight"],
-                "db_cols": ["date", "trip_id", "gr_no", "truck_no", "destination", "freight"],
-                "num_cols": ["freight"]
-            },
-            "canara_1747": {
-                "table": "canara_1747",
-                "sheet_cols": ["date", "comment", "to /from", "amount"],
-                "db_cols": ["date", "comment", "to_from", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Company_PODs": {
-                "table": "company_pods",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Truck_No", "Status", "AMOUNT"],
-                "db_cols": ["date", "trip_id", "gr_no", "truck_no", "status", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Cash_Ledger": {
-                "table": "cash_ledger",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Receivables": {
-                "table": "receivables",
-                "sheet_cols": ["Date", "Trip_ID", "Truck_No", "Company", "Received_Amt", "Bank_Name", "Shortage_Amt", "Remarks"],
-                "db_cols": ["date", "trip_id", "truck_no", "company", "received_amt", "bank_name", "shortage_amt", "remarks"],
-                "num_cols": ["received_amt", "shortage_amt"]
-            },
-            "Canara_311_Ledger": {
-                "table": "canara_311_ledger",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Canara_41_Ledger": {
-                "table": "canara_41_ledger",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"],
-                "num_cols": ["amount"]
-            },
-            "BOB_Ledger": {
-                "table": "bob_ledger",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Day_Book": {
-                "table": "day_book",
-                "sheet_cols": ["Date", "Account", "Entry_Type", "Category", "Amount", "Remarks"],
-                "db_cols": ["date", "account", "entry_type", "category", "amount", "remarks"],
-                "num_cols": ["amount"]
-            },
-            "Shekh_Filling_Ledger": {
-                "table": "shekh_filling_ledger",
-                "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"],
-                "num_cols": ["amount"]
-            },
-            "Company_Ledger": {
-                "table": "company_ledger",
-                "sheet_cols": ["date", "trip number", "gr number", "truck number", "destination", "freight"],
-                "db_cols": ["date", "trip_id", "gr_no", "truck_no", "destination", "freight"],
-                "num_cols": ["freight"]
-            },
-            "Universal_Ledger": {
-                "table": "universal_ledger",
-                "sheet_cols": ["date", "trip date", "gr number", "COMMENT", "truck number", "payment"],
-                "db_cols": ["date", "trip_date", "gr_no", "comment", "truck_no", "payment"],
-                "num_cols": ["payment"]
-            },
-            "Ishtyaque_Ledger": {
-                "table": "ishtyaque_ledger",
-                "sheet_cols": ["date", "trip number", "gr number", "COMMENT", "truck number", "amount"],
-                "db_cols": ["date", "trip_id", "gr_no", "comment", "truck_no", "amount"],
-                "num_cols": ["amount"]
-            }
+            "Bookings": {"table": "bookings", "sheet_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"], "db_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"], "num_cols": ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]},
+            "Advances": {"table": "advances", "sheet_cols": ["Date", "Trip_ID", "truck_no", "Diesel_Amt", "Pump_Name", "Cash_Amt", "Bank_Amt", "Bank_Account", "Total_Advance"], "db_cols": ["date", "trip_id", "truck_no", "diesel_amt", "pump_name", "cash_amt", "bank_amt", "bank_account", "total_advance"], "num_cols": ["diesel_amt", "cash_amt", "bank_amt", "total_advance"]},
+            "Owner_Ledger": {"table": "owner_ledger", "sheet_cols": ["date", "trip number", "gr number", "truck number", "destination", "freight"], "db_cols": ["date", "trip_id", "gr_no", "truck_no", "destination", "freight"], "num_cols": ["freight"]},
+            "canara_1747": {"table": "canara_1747", "sheet_cols": ["date", "comment", "to /from", "amount"], "db_cols": ["date", "comment", "to_from", "amount"], "num_cols": ["amount"]},
+            "Company_PODs": {"table": "company_pods", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Truck_No", "Status", "AMOUNT"], "db_cols": ["date", "trip_id", "gr_no", "truck_no", "status", "amount"], "num_cols": ["amount"]},
+            "Cash_Ledger": {"table": "cash_ledger", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"], "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"], "num_cols": ["amount"]},
+            "Receivables": {"table": "receivables", "sheet_cols": ["Date", "Trip_ID", "Truck_No", "Company", "Received_Amt", "Bank_Name", "Shortage_Amt", "Remarks"], "db_cols": ["date", "trip_id", "truck_no", "company", "received_amt", "bank_name", "shortage_amt", "remarks"], "num_cols": ["received_amt", "shortage_amt"]},
+            "Canara_311_Ledger": {"table": "canara_311_ledger", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"], "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"], "num_cols": ["amount"]},
+            "Canara_41_Ledger": {"table": "canara_41_ledger", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"], "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"], "num_cols": ["amount"]},
+            "BOB_Ledger": {"table": "bob_ledger", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"], "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"], "num_cols": ["amount"]},
+            "Day_Book": {"table": "day_book", "sheet_cols": ["Date", "Account", "Entry_Type", "Category", "Amount", "Remarks"], "db_cols": ["date", "account", "entry_type", "category", "amount", "remarks"], "num_cols": ["amount"]},
+            "Shekh_Filling_Ledger": {"table": "shekh_filling_ledger", "sheet_cols": ["Date", "Trip_ID", "GR_No", "Destination", "Amount"], "db_cols": ["date", "trip_id", "gr_no", "destination", "amount"], "num_cols": ["amount"]},
+            "Company_Ledger": {"table": "company_ledger", "sheet_cols": ["date", "trip number", "gr number", "truck number", "destination", "freight"], "db_cols": ["date", "trip_id", "gr_no", "truck_no", "destination", "freight"], "num_cols": ["freight"]},
+            "Universal_Ledger": {"table": "universal_ledger", "sheet_cols": ["date", "trip date", "gr number", "COMMENT", "truck number", "payment"], "db_cols": ["date", "trip_date", "gr_no", "comment", "truck_no", "payment"], "num_cols": ["payment"]},
+            "Ishtyaque_Ledger": {"table": "ishtyaque_ledger", "sheet_cols": ["date", "trip number", "gr number", "COMMENT", "truck number", "amount"], "db_cols": ["date", "trip_id", "gr_no", "comment", "truck_no", "amount"], "num_cols": ["amount"]}
         }
 
         progress_bar = st.progress(0)
@@ -164,20 +93,24 @@ def sync_data_to_supabase():
                 if raw_data and len(raw_data) > 1:
                     df = pd.DataFrame(raw_data[1:], columns=config["sheet_cols"])
                     df.columns = config["db_cols"]
-                    df = df.fillna("")
                     
+                    # 1. डेटा क्लीनिंग
                     for col in df.columns:
                         df[col] = df[col].astype(str).str.strip()
 
+                    # 2. डेट फॉर्मेटिंग
                     for col in ["date", "trip_date"]:
                         if col in df.columns:
                             df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
+                    # 3. नंबर फॉर्मेटिंग
                     for num_col in config["num_cols"]:
                         if num_col in df.columns:
-                            df[num_col] = pd.to_numeric(df[num_col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
+                            df[num_col] = pd.to_numeric(df[num_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0.0)
 
-                    df = df.replace(["", "nan", "None", "NaN", "<NA>"], None)
+                    # 🔥 4. बुलेटप्रूफ NaN फिक्स: किसी भी प्रकार के खाली डेटा को 'None' बना देगा
+                    df = df.replace(["", "nan", "NaN", "None", "<NA>"], None)
+                    df = df.where(pd.notnull(df), None)
                     
                     data_dict = df.to_dict(orient='records')
                     supabase.table(config["table"]).upsert(data_dict).execute()
@@ -200,7 +133,6 @@ def sync_data_to_supabase():
     except Exception as e:
         st.error(f"❌ मुख्य सिंक एरर: {str(e)}")
         st.exception(e)
-
 # ==========================================
 # 🖥️ MAIN APP LOGIC (Routing & Sidebar)
 # ==========================================
