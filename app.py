@@ -134,31 +134,14 @@ def sync_data_to_supabase():
         st.exception(e)
 
 # ==========================================
-# 🖥️ MAIN APP LOGIC (Routing & Sidebar)
+# 🖥️ MAIN APP LOGIC (SMART Routing & Sidebar)
 # ==========================================
 if check_password():
-    try:
-        from booking import show_booking_page
-        from advance import show_advance_page
-        from dashboard import show_dashboard_page
-        from reports import show_reports_page
-        
-        # 🔥 यहाँ सारे पुराने पेजेज (टैब्स) वापस जोड़ दिए गए हैं
-        from pod import show_pod_page
-        from receivable import show_receivable_page
-        from ledger import show_ledger_page
-        
-    except Exception as e:
-        st.error(f"⚠️ फाइल इम्पोर्ट एरर: {e}")
-        st.warning("कृपया चेक करें कि आपके फोल्डर में pod.py, receivable.py और ledger.py फाइलें मौजूद हैं या नहीं।")
-        st.stop()
-
     st.sidebar.title("🚛 ERP Menu")
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
 
-    # 🔥 मेन्यू लिस्ट में सारे टैब्स वापस आ गए हैं
     PAGES = ["🏠 होम", "बुकिंग", "एडवांस", "POD", "रिसीवेबल", "लेजर", "📊 डैशबोर्ड", "रिपोर्ट्स"]
     choice = st.sidebar.radio("नेविगेशन", PAGES)
 
@@ -170,10 +153,45 @@ if check_password():
         if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
             sync_data_to_supabase()
 
-    elif choice == "बुकिंग": show_booking_page()
-    elif choice == "एडवांस": show_advance_page()
-    elif choice == "POD": show_pod_page()
-    elif choice == "रिसीवेबल": show_receivable_page()
-    elif choice == "लेजर": show_ledger_page()
-    elif choice == "📊 डैशबोर्ड": show_dashboard_page()
-    elif choice == "रिपोर्ट्स": show_reports_page()
+    # 🔥 स्मार्ट नेविगेशन: अगर कोई फाइल नहीं है, तो ऐप क्रैश नहीं होगा!
+    elif choice == "बुकिंग":
+        try: 
+            from booking import show_booking_page
+            show_booking_page()
+        except: st.warning("⏳ booking.py फाइल नहीं मिल रही है।")
+        
+    elif choice == "एडवांस":
+        try: 
+            from advance import show_advance_page
+            show_advance_page()
+        except: st.warning("⏳ advance.py फाइल नहीं मिल रही है।")
+        
+    elif choice == "POD":
+        try: 
+            from pod import show_pod_page
+            show_pod_page()
+        except: st.info("⏳ POD का पेज अभी नहीं बना है।")
+        
+    elif choice == "रिसीवेबल":
+        try: 
+            from receivable import show_receivable_page
+            show_receivable_page()
+        except: st.info("⏳ रिसीवेबल का पेज अभी नहीं बना है।")
+        
+    elif choice == "लेजर":
+        try: 
+            from ledger import show_ledger_page
+            show_ledger_page()
+        except: st.info("⏳ लेजर का पेज अभी नहीं बना है।")
+        
+    elif choice == "📊 डैशबोर्ड":
+        try: 
+            from dashboard import show_dashboard_page
+            show_dashboard_page()
+        except: st.warning("⏳ dashboard.py फाइल नहीं मिल रही है।")
+        
+    elif choice == "रिपोर्ट्स":
+        try: 
+            from reports import show_reports_page
+            show_reports_page()
+        except: st.warning("⏳ reports.py फाइल नहीं मिल रही है।")
