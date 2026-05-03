@@ -52,7 +52,7 @@ def check_password():
     return False
 
 # ==========================================
-# 🔄 MASTER SYNC FUNCTION (100% Pure Python NaN Fix)
+# 🔄 MASTER SYNC FUNCTION 
 # ==========================================
 def sync_data_to_supabase():
     try:
@@ -153,48 +153,51 @@ if check_password():
         if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
             sync_data_to_supabase()
 
-   elif choice == "बुकिंग":
-        from booking import show_booking_page
-        show_booking_page()
+    elif choice == "बुकिंग":
+        try: 
+            from booking import show_booking_page
+            show_booking_page()
+        except ImportError: 
+            st.warning("⏳ booking.py फाइल लोड नहीं हो पा रही है।")
         
     elif choice == "एडवांस":
         try: 
             from advance import show_advance_page
             show_advance_page()
-        except Exception as e: 
+        except ImportError: 
             st.warning("⏳ advance.py फाइल लोड नहीं हो पा रही है।")
         
     elif choice == "POD":
         try: 
             from pod import show_pod_page
             show_pod_page()
-        except Exception as e: 
+        except ImportError: 
             st.info("⏳ POD का पेज अभी नहीं बना है।")
         
     elif choice == "रिसीवेबल":
         try: 
             from receivable import show_receivable_page
             show_receivable_page()
-        except Exception as e: 
+        except ImportError: 
             st.info("⏳ रिसीवेबल का पेज अभी नहीं बना है।")
         
     elif choice == "लेजर":
         try: 
             from ledger import show_ledger_page
             show_ledger_page()
-        except Exception as e: 
+        except ImportError: 
             st.info("⏳ लेजर का पेज अभी नहीं बना है।")
         
     elif choice == "📊 डैशबोर्ड":
         try: 
             from dashboard import show_dashboard_page
             show_dashboard_page()
-        except Exception as e: 
+        except ImportError: 
             st.warning("⏳ dashboard.py फाइल लोड नहीं हो पा रही है।")
         
     elif choice == "रिपोर्ट्स":
         try: 
             from reports import show_reports_page
             show_reports_page()
-        except Exception as e: 
+        except ImportError: 
             st.warning("⏳ reports.py फाइल लोड नहीं हो पा रही है।")
