@@ -55,14 +55,13 @@ def check_password():
 # 🔄 MASTER SYNC FUNCTION (All 15 Tables)
 # ==========================================
 # ==========================================
-# 🔄 MASTER SYNC FUNCTION (Anti-NaN Version)
+# 🔄 MASTER SYNC FUNCTION (100% Pure Python NaN Fix)
 # ==========================================
 def sync_data_to_supabase():
     try:
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से सारी टेबल्स का डेटा पढ़ा जा रहा है... कृपया प्रतीक्षा करें।")
         
-        # (आपका SYNC_CONFIG वाला हिस्सा बिल्कुल वैसा ही रहेगा, उसे नहीं बदलना है)
         SYNC_CONFIG = {
             "Bookings": {"table": "bookings", "sheet_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"], "db_cols": ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"], "num_cols": ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]},
             "Advances": {"table": "advances", "sheet_cols": ["Date", "Trip_ID", "truck_no", "Diesel_Amt", "Pump_Name", "Cash_Amt", "Bank_Amt", "Bank_Account", "Total_Advance"], "db_cols": ["date", "trip_id", "truck_no", "diesel_amt", "pump_name", "cash_amt", "bank_amt", "bank_account", "total_advance"], "num_cols": ["diesel_amt", "cash_amt", "bank_amt", "total_advance"]},
@@ -106,16 +105,28 @@ def sync_data_to_supabase():
                     # 3. नंबर फॉर्मेटिंग
                     for num_col in config["num_cols"]:
                         if num_col in df.columns:
-                            df[num_col] = pd.to_numeric(df[num_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0.0)
+                            df[num_col] = pd.to_numeric(df[num_col].astype(str).str.replace(',', ''), errors='coerce')
 
-                    # 🔥 4. बुलेटप्रूफ NaN फिक्स: किसी भी प्रकार के खाली डेटा को 'None' बना देगा
-                    df = df.replace(["", "nan", "NaN", "None", "<NA>"], None)
-                    df = df.where(pd.notnull(df), None)
+                    # डेटा को डिक्शनरी में बदला
+                    raw_dict_list = df.to_dict(orient='records')
                     
-                    data_dict = df.to_dict(orient='records')
-                    supabase.table(config["table"]).upsert(data_dict).execute()
+                    # 🔥 4. सबसे बड़ा फिक्स (Pure Python Clean-up): 
+                    # Pandas को दरकिनार करके एक-एक सेल चेक करना ताकि कोई NaN बच ही न पाए
+                    clean_data_list = []
+                    for row in raw_dict_list:
+                        clean_row = {}
+                        for key, val in row.items():
+                            # अगर वैल्यू NaN है, खाली है, या 'nan' टेक्स्ट है, तो उसे पक्का 'None' कर दो
+                            if pd.isna(val) or val == 'nan' or val == '':
+                                clean_row[key] = None
+                            else:
+                                clean_row[key] = val
+                        clean_data_list.append(clean_row)
                     
-                    success_logs.append(f"✅ {sheet_name}: {len(data_dict)} एंट्रीज़")
+                    # साफ किया हुआ डेटा Supabase में भेजें
+                    supabase.table(config["table"]).upsert(clean_data_list).execute()
+                    
+                    success_logs.append(f"✅ {sheet_name}: {len(clean_data_list)} एंट्रीज़")
                 else:
                     success_logs.append(f"⚠️ {sheet_name}: डेटा नहीं मिला")
 
@@ -132,8 +143,7 @@ def sync_data_to_supabase():
 
     except Exception as e:
         st.error(f"❌ मुख्य सिंक एरर: {str(e)}")
-        st.exception(e)
-# ==========================================
+        st.exception(e)# ==========================================
 # 🖥️ MAIN APP LOGIC (Routing & Sidebar)
 # ==========================================
 if check_password():
