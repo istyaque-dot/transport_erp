@@ -2,24 +2,30 @@ import streamlit as st
 import datetime
 import time
 import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import base64
 from PIL import Image
 import io
-from supabase import create_client
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
 
 # ==========================================
-# 🗄️ SUPABASE DATABASE CONNECTION
+# 🗄️ DATABASE
 # ==========================================
-@st.cache_resource
-def get_supabase_client():
-    clean_url = str(st.secrets["supabase"]["url"]).strip()
-    clean_key = str(st.secrets["supabase"]["key"]).strip()
-    return create_client(clean_url, clean_key)
 
-supabase = get_supabase_client()
+@st.cache_resource(ttl=3000)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
 
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
@@ -33,12 +39,13 @@ def upload_to_drive(file_bytes, file_name):
         return result if "Error" not in result else None
     except: return None
 
-# 🟢 A4 SIZE PDF LOGIC
+# 🟢 YAHAN A4 SIZE PDF KA LOGIC ADD KIYA GAYA HAI
 def prepare_pod_file(uploaded_files):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
         return uploaded_files[0].read(), "pdf"
         
+    # A4 Size Dimensions (300 DPI for high quality printing)
     A4_WIDTH = 2480
     A4_HEIGHT = 3508
     
@@ -48,13 +55,16 @@ def prepare_pod_file(uploaded_files):
             img = Image.open(file)
             if img.mode != 'RGB': img = img.convert('RGB')
             
+            # फोटो को A4 साइज़ के हिसाब से रीसाइज़ करें
             try:
                 img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
             except AttributeError:
                 img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
             
+            # एक एकदम सफेद (White) A4 साइज़ का पन्ना बनाएं
             a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
             
+            # ऑरिजिनल फोटो को सफेद पन्ने के बिल्कुल बीचों-बीच (Center) चिपका दें
             x_offset = (A4_WIDTH - img.width) // 2
             y_offset = (A4_HEIGHT - img.height) // 2
             a4_canvas.paste(img, (x_offset, y_offset))
@@ -72,113 +82,91 @@ def prepare_pod_file(uploaded_files):
 
 def save_gr_link_to_db(trip_id, gr_url):
     try:
-        supabase.table("bookings").update({"google_url": gr_url}).eq("trip_id", str(trip_id)).execute()
-        return True
+        db = connect_to_sheet()
+        sheet = db.worksheet("Bookings")
+        ids = sheet.col_values(15)
+        if trip_id in ids:
+            row_index = ids.index(trip_id) + 1
+            sheet.update_cell(row_index, 17, gr_url)
+            return True
     except: return False
 
 def save_booking_to_db(row_data):
     try:
-        data_dict = {
-            "date": row_data[0],
-            "from_loc": row_data[1],
-            "company": row_data[2],
-            "freight_truck": float(row_data[3]),
-            "freight_company": float(row_data[4]),
-            "weight": float(row_data[5]),
-            "truck_no": row_data[6],
-            "destination": row_data[7],
-            "gr_number": row_data[8],
-            "universal_amount": float(row_data[9]),
-            "connect_person": row_data[10],
-            "totalfright": float(row_data[11]),
-            "truck_freight": float(row_data[12]),
-            "universal_payment": float(row_data[13]),
-            "trip_id": row_data[14],
-            "ishtyaque": float(row_data[15])
-        }
-        supabase.table("bookings").insert(data_dict).execute()
+        db = connect_to_sheet()
+        db.worksheet("Bookings").append_row(row_data, table_range="A1")
         return True
-    except Exception as e: 
-        st.error(f"DB Error: {e}")
-        return False
+    except: return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120)
 def get_all_trips():
     try:
-        response = supabase.table("bookings").select("*").execute()
-        if response.data:
-            df = pd.DataFrame(response.data)
-            ordered_cols = ["date", "from_loc", "company", "freight_truck", "freight_company", 
-                            "weight", "truck_no", "destination", "gr_number", "universal_amount", 
-                            "connect_person", "totalfright", "truck_freight", "universal_payment", 
-                            "trip_id", "ishtyaque", "google_url"]
-            for col in ordered_cols:
-                if col not in df.columns:
-                    df[col] = None
-            return df[ordered_cols]
+        db = connect_to_sheet()
+        data = db.worksheet("Bookings").get_all_values()
+        if len(data) > 1:
+            return pd.DataFrame(data[1:], columns=data[0])
         return pd.DataFrame()
     except: return pd.DataFrame()
 
 def update_booking_in_db(trip_id, updated_row):
     try:
-        data_dict = {
-            "date": updated_row[0], "from_loc": updated_row[1], "company": updated_row[2],
-            "freight_truck": float(updated_row[3]), "freight_company": float(updated_row[4]),
-            "weight": float(updated_row[5]), "truck_no": updated_row[6], "destination": updated_row[7],
-            "gr_number": updated_row[8], "universal_amount": float(updated_row[9]),
-            "connect_person": updated_row[10], "totalfright": float(updated_row[11]),
-            "truck_freight": float(updated_row[12]), "universal_payment": float(updated_row[13]),
-            "ishtyaque": float(updated_row[15])
-        }
-        supabase.table("bookings").update(data_dict).eq("trip_id", str(trip_id)).execute()
+        db = connect_to_sheet()
+        sheet = db.worksheet("Bookings")
+        ids = sheet.col_values(15)
+        if trip_id in ids:
+            row_index = ids.index(trip_id) + 1
+            sheet.update(f"A{row_index}:P{row_index}", [updated_row])
+            return True
+    except: return False
+
+def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest,
+                    comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet()
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        base = [str(date_val), str(trip_id), gr, str(truck_no), str(dest)]
+        db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
+        db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
+        if int(uni_amt) > 0:
+            db.worksheet("Universal_Ledger").append_row(
+                [str(date_val), str(trip_id), gr, "N/A", f"Freight: {truck_no}", -int(uni_amt)], table_range="A1")
+        if int(ish_amt) > 0:
+            db.worksheet("Ishtyaque_Ledger").append_row(
+                [str(date_val), str(trip_id), gr, "N/A", f"Profit: {truck_no}", -int(ish_amt)], table_range="A1")
         return True
     except: return False
 
-def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+def update_ledgers(date_val, trip_id, gr_no, truck_no, dest,
+                   comp_amt, owner_amt, uni_amt, ish_amt):
     try:
+        db = connect_to_sheet()
         gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
-        
-        supabase.table("company_ledger").insert({
-            "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
-            "truck_no": str(truck_no), "destination": str(dest), "freight": float(comp_amt)
-        }).execute()
-        
-        supabase.table("owner_ledger").insert({
-            "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
-            "truck_no": str(truck_no), "destination": str(dest), "freight": float(owner_amt)
-        }).execute()
-        
-        if float(uni_amt) > 0:
-            supabase.table("universal_ledger").insert({
-                "date": str(date_val), "trip_date": str(trip_id), "gr_no": gr, 
-                "comment": "N/A", "truck_no": f"Freight: {truck_no}", "payment": -float(uni_amt)
-            }).execute()
-            
-        if float(ish_amt) > 0:
-            supabase.table("ishtyaque_ledger").insert({
-                "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
-                "comment": "N/A", "truck_no": f"Profit: {truck_no}", "amount": -float(ish_amt)
-            }).execute()
-            
-        return True
-    except Exception as e: 
-        st.error(f"Ledger Insert Error: {e}")
-        return False
-
-def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
-    try:
-        supabase.table("company_ledger").delete().eq("trip_id", str(trip_id)).execute()
-        supabase.table("owner_ledger").delete().eq("trip_id", str(trip_id)).execute()
-        supabase.table("universal_ledger").delete().eq("trip_date", str(trip_id)).execute()
-        supabase.table("ishtyaque_ledger").delete().eq("trip_id", str(trip_id)).execute()
-        
-        save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt)
+        ledgers = {"Company_Ledger": int(comp_amt), "Owner_Ledger": int(owner_amt)}
+        if int(uni_amt) > 0: ledgers["Universal_Ledger"] = -int(uni_amt)
+        if int(ish_amt) > 0: ledgers["Ishtyaque_Ledger"] = -int(ish_amt)
+        for sheet_name, amt in ledgers.items():
+            ws = db.worksheet(sheet_name)
+            records = ws.get_all_values()
+            row_to_update = -1
+            for i, row in enumerate(records):
+                if len(row) > 1 and trip_id in row:
+                    row_to_update = i + 1; break
+            desc = (f"Freight: {truck_no}" if sheet_name == "Universal_Ledger"
+                    else f"Profit: {truck_no}")
+            new_row = ([str(date_val), str(trip_id), gr, "N/A", desc, amt]
+                       if sheet_name in ["Universal_Ledger", "Ishtyaque_Ledger"]
+                       else [str(date_val), str(trip_id), gr, str(truck_no), str(dest), amt])
+            if row_to_update != -1:
+                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row])
+            else:
+                ws.append_row(new_row, table_range="A1")
         return True
     except: return False
 
 # ==========================================
 # 🎨 CSS
 # ==========================================
+
 BOOKING_CSS = """
 <style>
     .block-container {
@@ -729,7 +717,7 @@ def show_booking_page():
                                         comp_freight, owner_freight, final_uni_amt, int(ish_amt)
                                     )
                                     success_count += 1
-                                    time.sleep(0.1) 
+                                    time.sleep(0.4)
                                 else:
                                     error_count += 1
 
