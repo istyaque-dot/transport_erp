@@ -134,7 +134,7 @@ def sync_data_to_supabase():
         st.exception(e)
 
 # ==========================================
-# 🖥️ MAIN APP LOGIC (SMART Routing & Sidebar)
+# 🖥️ MAIN APP LOGIC 
 # ==========================================
 if check_password():
     st.sidebar.title("🚛 ERP Menu")
@@ -154,11 +154,10 @@ if check_password():
             sync_data_to_supabase()
 
     elif choice == "बुकिंग":
-        try: 
-            from booking import show_booking_page
-            show_booking_page()
-        except ImportError: 
-            st.warning("⏳ booking.py फाइल लोड नहीं हो पा रही है।")
+        # 🔥 यहाँ से मैंने जानबूझकर गार्ड हटा दिया है! 
+        # अब अगर कोई एरर होगा तो स्क्रीन पर साफ़-साफ़ लाल रंग में दिखेगा।
+        from booking import show_booking_page
+        show_booking_page()
         
     elif choice == "एडवांस":
         try: 
