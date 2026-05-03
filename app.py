@@ -1,8 +1,6 @@
 import streamlit as st
 import datetime
 import pandas as pd
-import requests
-import json
 from supabase import create_client
 
 # ==========================================
@@ -11,14 +9,20 @@ from supabase import create_client
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
 # ==========================================
-# 🔐 SUPABASE SETUP
+# 🔐 SUPABASE SETUP (🔥 SECRET CLEANUP FIX)
 # ==========================================
 try:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
-    supabase = create_client(url, key)
+    # सीक्रेट्स से URL और Key लेना
+    raw_url = str(st.secrets["supabase"]["url"])
+    raw_key = str(st.secrets["supabase"]["key"])
+    
+    # 🔥 यह फिल्टर किसी भी छिपे हुए (Invisible) या गलत करैक्टर को हटा देगा
+    clean_url = raw_url.encode('ascii', 'ignore').decode('ascii').strip()
+    clean_key = raw_key.encode('ascii', 'ignore').decode('ascii').strip()
+    
+    supabase = create_client(clean_url, clean_key)
 except Exception as e:
-    st.error("Supabase Secrets missing! Please check Streamlit Cloud Settings.")
+    st.error(f"Supabase Secrets Setup Error: {e}")
 
 # ==========================================
 # 🎨 GLOBAL CSS
@@ -32,7 +36,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🔒 LOGIN SYSTEM (Double Check Fix)
+# 🔒 LOGIN SYSTEM
 # ==========================================
 def check_password():
     if st.session_state.get("password_correct", False):
@@ -54,20 +58,9 @@ def check_password():
     return False
 
 # ==========================================
-# 🔄 SYNC FUNCTION (Anti-ASCII Error Version)
-# ==========================================
-# ==========================================
-# 🔄 SYNC FUNCTION (Super Safe JSON Version)
-# ==========================================
-# ==========================================
-# 🔄 SYNC FUNCTION (Direct API - Bulletproof Version)
-# ==========================================
-# ==========================================
-# 🔄 SYNC FUNCTION (Bulletproof API Version)
+# 🔄 SYNC FUNCTION (Official Supabase Version)
 # ==========================================
 def sync_data_to_supabase():
-    import requests # नेटवर्क रिक्वेस्ट के लिए
-    
     try:
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से डेटा पढ़ा जा रहा है...")
@@ -78,64 +71,48 @@ def sync_data_to_supabase():
             cols = ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"]
             df_bk = pd.DataFrame(raw_bk[1:], columns=cols)
 
-            # 1. डेटा क्लीनिंग (खाली जगह हटाना)
+            # डेटा साफ़ करना
             df_bk = df_bk.fillna("")
             for col in df_bk.columns:
                 df_bk[col] = df_bk[col].astype(str).str.strip()
             
-            # 2. नंबर वाले कॉलम को Float में बदलना
+            # नंबर सही करना
             num_cols = ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
             for col in num_cols:
                 df_bk[col] = pd.to_numeric(df_bk[col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
 
-            # 3. खाली स्ट्रिंग को None (Null) बनाना
+            # खाली जगह को None करना
             df_bk = df_bk.replace(["", "nan", "None", "NaN", "<NA>"], None)
             
-            # 4. डेटा को डिक्शनरी में बदलना
             data_dict = df_bk.to_dict(orient='records')
 
-            st.info("☁️ Direct API के ज़रिए Supabase में सुरक्षित डेटा भेजा जा रहा है...")
+            st.info("☁️ Supabase में डेटा सेव किया जा रहा है...")
             
-            # 5. Supabase API सेटअप
-            url = f"{st.secrets['supabase']['url']}/rest/v1/bookings"
-            headers = {
-                "apikey": st.secrets["supabase"]["key"],
-                "Authorization": f"Bearer {st.secrets['supabase']['key']}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates" # पुरानी ट्रिप अपडेट, नई ट्रिप सेव
-            }
-
-            # 🔥 सबसे अहम बदलाव: 'json=data_dict' का इस्तेमाल
-            # यह खुद ब खुद हिंदी को सुरक्षित फॉर्मेट में बदल देगा (No ascii/latin-1 error)
-            response = requests.post(url, headers=headers, json=data_dict)
-
-            # 6. रिजल्ट चेक करना
-            if response.status_code in [200, 201]:
-                st.success(f"✅ {len(data_dict)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
-            else:
-                st.error(f"❌ API Error {response.status_code}: {response.text}")
-                
+            # ✅ अब हमारे Secrets बिल्कुल शुद्ध हैं, इसलिए यह बिना किसी एरर के काम करेगा
+            supabase.table("bookings").upsert(data_dict).execute()
+            
+            st.success(f"✅ {len(data_dict)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
         else:
             st.warning("⚠️ गूगल शीट में डेटा नहीं मिला।")
             
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
-        st.exception(e)# ==========================================
+        st.exception(e)
+
+# ==========================================
 # 🖥️ MAIN APP LOGIC
 # ==========================================
 if check_password():
     try:
-        # यहाँ पक्का करें कि ये फाइलें आपके GitHub फोल्डर में हैं
         from booking import show_booking_page
         from advance import show_advance_page
         from dashboard import show_dashboard_page
         from reports import show_reports_page
-        # बाकी इम्पोर्ट्स यहाँ जोड़ें...
+        # (अपनी बाकी फाइलें यहाँ रखें...)
     except Exception as e:
         st.error(f"⚠️ फाइल इम्पोर्ट एरर: {e}")
         st.stop()
 
-    # Sidebar
     st.sidebar.title("🚛 ERP Menu")
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
