@@ -153,12 +153,9 @@ if check_password():
         if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
             sync_data_to_supabase()
 
-    elif choice == "बुकिंग":
-        try: 
-            from booking import show_booking_page
-            show_booking_page()
-        except Exception as e: 
-            st.warning("⏳ booking.py फाइल लोड नहीं हो पा रही है।")
+   elif choice == "बुकिंग":
+        from booking import show_booking_page
+        show_booking_page()
         
     elif choice == "एडवांस":
         try: 
