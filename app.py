@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import requests
 import json
 from supabase import create_client
 
@@ -58,6 +59,9 @@ def check_password():
 # ==========================================
 # 🔄 SYNC FUNCTION (Super Safe JSON Version)
 # ==========================================
+# ==========================================
+# 🔄 SYNC FUNCTION (Direct API - Bulletproof Version)
+# ==========================================
 def sync_data_to_supabase():
     try:
         from reports import get_sheet_data_for_reports 
@@ -69,38 +73,45 @@ def sync_data_to_supabase():
             cols = ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"]
             df_bk = pd.DataFrame(raw_bk[1:], columns=cols)
 
-            # 1. डेटा को साफ करना और हर चीज़ को 'String' बनाना
             df_bk = df_bk.fillna("")
             for col in df_bk.columns:
                 df_bk[col] = df_bk[col].astype(str).str.strip()
             
-            # 2. नंबर वाले कॉलम को सही तरीके से Float (दशमलव) में बदलना
             num_cols = ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
             for col in num_cols:
                 df_bk[col] = pd.to_numeric(df_bk[col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
 
-            # 3. खाली स्ट्रिंग को 'None' (Null) में बदलना ताकि Supabase एरर न दे
             df_bk = df_bk.replace(["", "nan", "None", "NaN", "<NA>"], None)
-
-            # 4. 🔥 सबसे अहम फिक्स: JSON डंप और लोड
-            # यह Numpy या Pandas के किसी भी खराब डेटा को शुद्ध पाइथन डेटा में बदल देगा (हिंदी को सुरक्षित रखते हुए)
             data_dict = df_bk.to_dict(orient='records')
-            safe_data = json.loads(json.dumps(data_dict, ensure_ascii=False))
 
-            st.info("☁️ Supabase में सेव किया जा रहा है...")
+            st.info("☁️ Direct API के ज़रिए Supabase में सेव किया जा रहा है...")
             
-            # 5. डेटा भेजना
-            supabase.table("bookings").upsert(safe_data).execute()
-            
-            st.success(f"✅ {len(safe_data)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
+            # 🔥 ब्रह्मास्त्र: Supabase Library को छोड़कर सीधा API Call
+            url = f"{st.secrets['supabase']['url']}/rest/v1/bookings"
+            headers = {
+                "apikey": st.secrets["supabase"]["key"],
+                "Authorization": f"Bearer {st.secrets['supabase']['key']}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates" # इसका मतलब है Upsert (पुराना अपडेट, नया सेव)
+            }
+
+            # डेटा को सुरक्षित UTF-8 बाइट्स में बदलना
+            payload = json.dumps(data_dict, ensure_ascii=False).encode('utf-8')
+
+            # Requests के ज़रिए डेटा भेजना
+            response = requests.post(url, headers=headers, data=payload)
+
+            if response.status_code in [200, 201]:
+                st.success(f"✅ {len(data_dict)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
+            else:
+                st.error(f"❌ API Error: {response.status_code} - {response.text}")
+                
         else:
             st.warning("⚠️ गूगल शीट में डेटा नहीं मिला।")
             
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
-        # अगर फिर भी एरर आता है, तो यह लाल बॉक्स में पूरी डिटेल दिखाएगा
         st.exception(e)
-
 # ==========================================
 # 🖥️ MAIN APP LOGIC
 # ==========================================
