@@ -62,7 +62,12 @@ def check_password():
 # ==========================================
 # 🔄 SYNC FUNCTION (Direct API - Bulletproof Version)
 # ==========================================
+# ==========================================
+# 🔄 SYNC FUNCTION (Bulletproof API Version)
+# ==========================================
 def sync_data_to_supabase():
+    import requests # नेटवर्क रिक्वेस्ट के लिए
+    
     try:
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से डेटा पढ़ा जा रहा है...")
@@ -73,46 +78,49 @@ def sync_data_to_supabase():
             cols = ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"]
             df_bk = pd.DataFrame(raw_bk[1:], columns=cols)
 
+            # 1. डेटा क्लीनिंग (खाली जगह हटाना)
             df_bk = df_bk.fillna("")
             for col in df_bk.columns:
                 df_bk[col] = df_bk[col].astype(str).str.strip()
             
+            # 2. नंबर वाले कॉलम को Float में बदलना
             num_cols = ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
             for col in num_cols:
                 df_bk[col] = pd.to_numeric(df_bk[col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
 
+            # 3. खाली स्ट्रिंग को None (Null) बनाना
             df_bk = df_bk.replace(["", "nan", "None", "NaN", "<NA>"], None)
+            
+            # 4. डेटा को डिक्शनरी में बदलना
             data_dict = df_bk.to_dict(orient='records')
 
-            st.info("☁️ Direct API के ज़रिए Supabase में सेव किया जा रहा है...")
+            st.info("☁️ Direct API के ज़रिए Supabase में सुरक्षित डेटा भेजा जा रहा है...")
             
-            # 🔥 ब्रह्मास्त्र: Supabase Library को छोड़कर सीधा API Call
+            # 5. Supabase API सेटअप
             url = f"{st.secrets['supabase']['url']}/rest/v1/bookings"
             headers = {
                 "apikey": st.secrets["supabase"]["key"],
                 "Authorization": f"Bearer {st.secrets['supabase']['key']}",
                 "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates" # इसका मतलब है Upsert (पुराना अपडेट, नया सेव)
+                "Prefer": "resolution=merge-duplicates" # पुरानी ट्रिप अपडेट, नई ट्रिप सेव
             }
 
-            # डेटा को सुरक्षित UTF-8 बाइट्स में बदलना
-            payload = json.dumps(data_dict, ensure_ascii=False).encode('utf-8')
+            # 🔥 सबसे अहम बदलाव: 'json=data_dict' का इस्तेमाल
+            # यह खुद ब खुद हिंदी को सुरक्षित फॉर्मेट में बदल देगा (No ascii/latin-1 error)
+            response = requests.post(url, headers=headers, json=data_dict)
 
-            # Requests के ज़रिए डेटा भेजना
-            response = requests.post(url, headers=headers, data=payload)
-
+            # 6. रिजल्ट चेक करना
             if response.status_code in [200, 201]:
                 st.success(f"✅ {len(data_dict)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
             else:
-                st.error(f"❌ API Error: {response.status_code} - {response.text}")
+                st.error(f"❌ API Error {response.status_code}: {response.text}")
                 
         else:
             st.warning("⚠️ गूगल शीट में डेटा नहीं मिला।")
             
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
-        st.exception(e)
-# ==========================================
+        st.exception(e)# ==========================================
 # 🖥️ MAIN APP LOGIC
 # ==========================================
 if check_password():
