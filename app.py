@@ -52,9 +52,6 @@ def check_password():
     return False
 
 # ==========================================
-# 🔄 MASTER SYNC FUNCTION (All 15 Tables)
-# ==========================================
-# ==========================================
 # 🔄 MASTER SYNC FUNCTION (100% Pure Python NaN Fix)
 # ==========================================
 def sync_data_to_supabase():
@@ -93,39 +90,30 @@ def sync_data_to_supabase():
                     df = pd.DataFrame(raw_data[1:], columns=config["sheet_cols"])
                     df.columns = config["db_cols"]
                     
-                    # 1. डेटा क्लीनिंग
                     for col in df.columns:
                         df[col] = df[col].astype(str).str.strip()
 
-                    # 2. डेट फॉर्मेटिंग
                     for col in ["date", "trip_date"]:
                         if col in df.columns:
                             df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
-                    # 3. नंबर फॉर्मेटिंग
                     for num_col in config["num_cols"]:
                         if num_col in df.columns:
                             df[num_col] = pd.to_numeric(df[num_col].astype(str).str.replace(',', ''), errors='coerce')
 
-                    # डेटा को डिक्शनरी में बदला
                     raw_dict_list = df.to_dict(orient='records')
                     
-                    # 🔥 4. सबसे बड़ा फिक्स (Pure Python Clean-up): 
-                    # Pandas को दरकिनार करके एक-एक सेल चेक करना ताकि कोई NaN बच ही न पाए
                     clean_data_list = []
                     for row in raw_dict_list:
                         clean_row = {}
                         for key, val in row.items():
-                            # अगर वैल्यू NaN है, खाली है, या 'nan' टेक्स्ट है, तो उसे पक्का 'None' कर दो
                             if pd.isna(val) or val == 'nan' or val == '':
                                 clean_row[key] = None
                             else:
                                 clean_row[key] = val
                         clean_data_list.append(clean_row)
                     
-                    # साफ किया हुआ डेटा Supabase में भेजें
                     supabase.table(config["table"]).upsert(clean_data_list).execute()
-                    
                     success_logs.append(f"✅ {sheet_name}: {len(clean_data_list)} एंट्रीज़")
                 else:
                     success_logs.append(f"⚠️ {sheet_name}: डेटा नहीं मिला")
@@ -143,7 +131,9 @@ def sync_data_to_supabase():
 
     except Exception as e:
         st.error(f"❌ मुख्य सिंक एरर: {str(e)}")
-        st.exception(e)# ==========================================
+        st.exception(e)
+
+# ==========================================
 # 🖥️ MAIN APP LOGIC (Routing & Sidebar)
 # ==========================================
 if check_password():
@@ -152,9 +142,15 @@ if check_password():
         from advance import show_advance_page
         from dashboard import show_dashboard_page
         from reports import show_reports_page
-        # अगर आपके और भी पेजेज हैं (जैसे receivable), तो उन्हें यहाँ इम्पोर्ट कर लें
+        
+        # 🔥 यहाँ सारे पुराने पेजेज (टैब्स) वापस जोड़ दिए गए हैं
+        from pod import show_pod_page
+        from receivable import show_receivable_page
+        from ledger import show_ledger_page
+        
     except Exception as e:
         st.error(f"⚠️ फाइल इम्पोर्ट एरर: {e}")
+        st.warning("कृपया चेक करें कि आपके फोल्डर में pod.py, receivable.py और ledger.py फाइलें मौजूद हैं या नहीं।")
         st.stop()
 
     st.sidebar.title("🚛 ERP Menu")
@@ -162,7 +158,8 @@ if check_password():
         st.session_state["password_correct"] = False
         st.rerun()
 
-    PAGES = ["🏠 होम", "बुकिंग", "एडवांस", "📊 डैशबोर्ड", "रिपोर्ट्स"]
+    # 🔥 मेन्यू लिस्ट में सारे टैब्स वापस आ गए हैं
+    PAGES = ["🏠 होम", "बुकिंग", "एडवांस", "POD", "रिसीवेबल", "लेजर", "📊 डैशबोर्ड", "रिपोर्ट्स"]
     choice = st.sidebar.radio("नेविगेशन", PAGES)
 
     if choice == "🏠 होम":
@@ -175,5 +172,8 @@ if check_password():
 
     elif choice == "बुकिंग": show_booking_page()
     elif choice == "एडवांस": show_advance_page()
+    elif choice == "POD": show_pod_page()
+    elif choice == "रिसीवेबल": show_receivable_page()
+    elif choice == "लेजर": show_ledger_page()
     elif choice == "📊 डैशबोर्ड": show_dashboard_page()
     elif choice == "रिपोर्ट्स": show_reports_page()
