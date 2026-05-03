@@ -1,159 +1,48 @@
-import streamlit as st
-import datetime
-import pandas as pd
-from supabase import create_client
-
-# ==========================================
-# ⚙️ APP CONFIGURATION
-# ==========================================
-st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
-
-# ==========================================
-# 🔐 SUPABASE SETUP
-# ==========================================
-try:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
-    supabase = create_client(url, key)
-except Exception as e:
-    st.error("Supabase Secrets missing or incorrect!")
-
-# ==========================================
-# 🎨 GLOBAL CSS
-# ==========================================
-st.markdown("""
-<style>
-/* Sidebar styling */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #001f5b 0%, #003399 60%, #0055cc 100%) !important;
-}
-[data-testid="stSidebar"] * { color: white !important; }
-/* Sidebar radio buttons */
-[data-testid="stSidebar"] [data-testid="stRadio"] div[data-baseweb="radio"] > label {
-    background: rgba(255,255,255,0.06) !important;
-    border-radius: 6px !important;
-    padding: 4px 10px !important;
-    margin: 1px 0 !important;
-}
-[data-testid="stSidebar"] [data-testid="stRadio"] div[data-baseweb="radio"]:has(input:checked) > label {
-    background: rgba(255,255,255,0.2) !important;
-    border-left: 3px solid #fff !important;
-}
-.block-container { padding-top: 0.5rem !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# 🔄 SYNC FUNCTION (Google -> Supabase)
-# ==========================================
 def sync_data_to_supabase():
     try:
         from reports import get_sheet_data_for_reports 
         st.info("🚀 माइग्रेशन शुरू हो रहा है...")
         
-        # Bookings डेटा सिंक
+        # 1. Bookings डेटा गूगल शीट से लाना
         raw_bk = get_sheet_data_for_reports("Bookings")
+        
         if raw_bk and len(raw_bk) > 1:
-            df_bk = pd.DataFrame(raw_bk[1:], columns=[
+            # कॉलम के नाम सेट करना
+            cols = [
                 "date", "from_loc", "company", "freight_truck", "freight_company", 
                 "weight", "truck_no", "destination", "gr_number", "universal_amount", 
                 "connect_person", "totalfright", "truck_freight", "universal_payment", 
                 "trip_id", "ishtyaque", "google_url"
-            ])
+            ]
+            
+            df_bk = pd.DataFrame(raw_bk[1:], columns=cols)
 
-            # UTF-8 Encoding Fix (हिंदी अक्षरों के लिए)
+            # --- 🔥 मुख्य फिक्स: Encoding और डेटा क्लीनिंग ---
+            def clean_text(text):
+                if text is None or str(text).lower() in ['nan', 'none', '']:
+                    return None
+                # किसी भी भाषा (हिंदी/इंग्लिश) को सुरक्षित UTF-8 में बदलना
+                return str(text).encode('utf-8', errors='ignore').decode('utf-8')
+
+            # पूरे डेटाफ्रेम पर क्लीनिंग लागू करना
             for col in df_bk.columns:
-                df_bk[col] = df_bk[col].astype(str).apply(lambda x: x.encode('utf-8', 'ignore').decode('utf-8'))
+                df_bk[col] = df_bk[col].apply(clean_text)
             
-            df_bk = df_bk.replace(['', 'nan', 'None', 'None'], None)
+            # नंबर वाले कॉलम्स को सही फॉर्मेट में बदलना
+            num_cols = ["freight_truck", "freight_company", "weight", "universal_amount", 
+                        "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
+            
+            for col in num_cols:
+                df_bk[col] = pd.to_numeric(df_bk[col], errors='coerce').fillna(0)
+
+            # डेटा को Supabase में भेजना
             data_dict = df_bk.to_dict(orient='records')
-            
             supabase.table("bookings").upsert(data_dict).execute()
-            st.success(f"✅ {len(data_dict)} बुकिंग्स सिंक हो गईं!")
+            
+            st.success(f"✅ {len(data_dict)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
         else:
-            st.warning("⚠️ शीट में डेटा नहीं मिला।")
+            st.warning("⚠️ गूगल शीट में डेटा नहीं मिला।")
             
     except Exception as e:
+        # एरर को विस्तार से दिखाएं ताकि समझने में आसानी हो
         st.error(f"❌ सिंक एरर: {str(e)}")
-
-# ==========================================
-# 🔒 LOGIN SYSTEM
-# ==========================================
-def check_password():
-    if st.session_state.get("password_correct", False):
-        return True
-
-    st.markdown("<div style='text-align:center; padding-top:4vh;'><div style='font-size:3.2rem;'>🚛</div><div style='font-size:1.6rem; font-weight:900; color:#003399;'>BAZPUR UP TRANSPORT</div></div>", unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 1.2, 1])
-    with col:
-        with st.form("login_form"):
-            u = st.text_input("👤 Username")
-            p = st.text_input("🔑 Password", type="password")
-            if st.form_submit_button("🚀 Login करें"):
-                if u == "admin" and p == "khan786":
-                    st.session_state["password_correct"] = True
-                    st.rerun()
-                else:
-                    st.error("❌ गलत यूजरनाम या पासवर्ड")
-    return False
-
-# ==========================================
-# 🖥️ MAIN APP LOGIC
-# ==========================================
-if check_password():
-    # ── Imports ──
-    try:
-        from booking import show_booking_page
-        from advance import show_advance_page
-        from receivable import show_receivable_page
-        from daybook import show_daybook_page
-        from dashboard import show_dashboard_page
-        from transfer import show_transfer_page
-        from reports import show_reports_page
-        from pod import show_pod_page
-        from company_hisaab import show_company_page
-        from outstanding import show_outstanding_page
-    except ImportError as e:
-        st.error(f"❌ फाइल इम्पोर्ट एरर: {e}")
-        st.stop()
-
-    # ── Sidebar ──
-    st.sidebar.markdown("<div style='text-align:center; padding: 12px 0;'><div style='font-size:1.8rem;'>🚛</div><div style='font-size:1rem; font-weight:900; color:white;'>Transport ERP</div></div>", unsafe_allow_html=True)
-    
-    if st.sidebar.button("🚪 Logout"):
-        st.session_state["password_correct"] = False
-        st.rerun()
-
-    st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-
-    PAGES = [
-        "🏠 होम (Home)", "बुकिंग", "एडवांस", "रिसिवेबल (पार्टी पेमेंट)", 
-        "डे बुक (Credit/Debit)", "ट्रांसफर / पेमेंट (Contra)", 
-        "रिपोर्ट्स (Reports)", "POD और फाइनल हिसाब", "🏢 कंपनी खाता", 
-        "💸 लेना - देना (Outstanding)", "📊 डैशबोर्ड"
-    ]
-    choice = st.sidebar.radio("मेन्यू", PAGES, label_visibility="collapsed")
-
-    # ── Routing ──
-    if choice == "🏠 होम (Home)":
-        st.markdown("<div style='text-align:center; padding-top:4vh;'><h1 style='color:#003399;'>BAZPUR UP TRANSPORT</h1></div>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Status", "Online", "Live Mode")
-        c2.metric("Database", "G-Sheets + Supabase", "Synced")
-        c3.metric("System", "Fast Engine", "Active")
-
-        st.markdown("---")
-        st.subheader("⚙️ एडमिन कंट्रोल")
-        if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
-            sync_data_to_supabase()
-
-    elif choice == "बुकिंग": show_booking_page()
-    elif choice == "एडवांस": show_advance_page()
-    elif choice == "रिसिवेबल (पार्टी पेमेंट)": show_receivable_page()
-    elif choice == "डे बुक (Credit/Debit)": show_daybook_page()
-    elif choice == "ट्रांसफर / पेमेंट (Contra)": show_transfer_page()
-    elif choice == "रिपोर्ट्स (Reports)": show_reports_page()
-    elif choice == "POD और फाइनल हिसाब": show_pod_page()
-    elif choice == "🏢 कंपनी खाता": show_company_page()
-    elif choice == "💸 लेना - देना (Outstanding)": show_outstanding_page()
-    elif choice == "📊 डैशबोर्ड": show_dashboard_page()
