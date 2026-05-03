@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import json
 from supabase import create_client
 
 # ==========================================
@@ -54,10 +55,13 @@ def check_password():
 # ==========================================
 # 🔄 SYNC FUNCTION (Anti-ASCII Error Version)
 # ==========================================
+# ==========================================
+# 🔄 SYNC FUNCTION (Super Safe JSON Version)
+# ==========================================
 def sync_data_to_supabase():
     try:
         from reports import get_sheet_data_for_reports 
-        st.info("🚀 माइग्रेशन शुरू हो रहा है...")
+        st.info("🚀 गूगल शीट से डेटा पढ़ा जा रहा है...")
         
         raw_bk = get_sheet_data_for_reports("Bookings")
         
@@ -65,26 +69,37 @@ def sync_data_to_supabase():
             cols = ["date", "from_loc", "company", "freight_truck", "freight_company", "weight", "truck_no", "destination", "gr_number", "universal_amount", "connect_person", "totalfright", "truck_freight", "universal_payment", "trip_id", "ishtyaque", "google_url"]
             df_bk = pd.DataFrame(raw_bk[1:], columns=cols)
 
-            # 🔥 हिंदी अक्षरों को सुरक्षित करने वाला फिक्स
-            def clean_val(x):
-                if x is None or str(x).lower() in ['nan', 'none', '']: return None
-                return str(x).encode('utf-8', 'ignore').decode('utf-8')
-
+            # 1. डेटा को साफ करना और हर चीज़ को 'String' बनाना
+            df_bk = df_bk.fillna("")
             for col in df_bk.columns:
-                df_bk[col] = df_bk[col].apply(clean_val)
+                df_bk[col] = df_bk[col].astype(str).str.strip()
             
-            # नंबर कन्वर्शन
+            # 2. नंबर वाले कॉलम को सही तरीके से Float (दशमलव) में बदलना
             num_cols = ["freight_truck", "freight_company", "weight", "universal_amount", "totalfright", "truck_freight", "universal_payment", "ishtyaque"]
             for col in num_cols:
-                df_bk[col] = pd.to_numeric(df_bk[col], errors='coerce').fillna(0)
+                df_bk[col] = pd.to_numeric(df_bk[col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
 
+            # 3. खाली स्ट्रिंग को 'None' (Null) में बदलना ताकि Supabase एरर न दे
+            df_bk = df_bk.replace(["", "nan", "None", "NaN", "<NA>"], None)
+
+            # 4. 🔥 सबसे अहम फिक्स: JSON डंप और लोड
+            # यह Numpy या Pandas के किसी भी खराब डेटा को शुद्ध पाइथन डेटा में बदल देगा (हिंदी को सुरक्षित रखते हुए)
             data_dict = df_bk.to_dict(orient='records')
-            supabase.table("bookings").upsert(data_dict).execute()
-            st.success(f"✅ {len(data_dict)} बुकिंग्स सिंक हो गईं!")
+            safe_data = json.loads(json.dumps(data_dict, ensure_ascii=False))
+
+            st.info("☁️ Supabase में सेव किया जा रहा है...")
+            
+            # 5. डेटा भेजना
+            supabase.table("bookings").upsert(safe_data).execute()
+            
+            st.success(f"✅ {len(safe_data)} बुकिंग्स सफलतापूर्वक सिंक हो गईं!")
         else:
             st.warning("⚠️ गूगल शीट में डेटा नहीं मिला।")
+            
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
+        # अगर फिर भी एरर आता है, तो यह लाल बॉक्स में पूरी डिटेल दिखाएगा
+        st.exception(e)
 
 # ==========================================
 # 🖥️ MAIN APP LOGIC
