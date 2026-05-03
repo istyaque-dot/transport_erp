@@ -1,3 +1,56 @@
+import streamlit as st
+import datetime
+import pandas as pd
+from supabase import create_client
+
+# ==========================================
+# ⚙️ APP CONFIGURATION
+# ==========================================
+st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
+
+# ==========================================
+# 🔐 SUPABASE SETUP
+# ==========================================
+try:
+    clean_url = str(st.secrets["supabase"]["url"]).strip()
+    clean_key = str(st.secrets["supabase"]["key"]).strip()
+    supabase = create_client(clean_url, clean_key)
+except Exception as e:
+    st.error(f"Supabase Secrets Setup Error: {e}")
+
+# ==========================================
+# 🎨 GLOBAL CSS
+# ==========================================
+st.markdown("""
+<style>
+[data-testid="stSidebar"] { background: linear-gradient(180deg, #001f5b 0%, #003399 60%, #0055cc 100%) !important; }
+[data-testid="stSidebar"] * { color: white !important; }
+.block-container { padding-top: 1rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 🔒 LOGIN SYSTEM
+# ==========================================
+def check_password():
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.markdown("<div style='text-align:center; padding-top:10vh;'><div style='font-size:4rem;'>🚛</div><h1 style='color:#003399;'>BAZPUR UP TRANSPORT</h1></div>", unsafe_allow_html=True)
+    
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
+        with st.form("login_form_new"):
+            u = st.text_input("👤 Username")
+            p = st.text_input("🔑 Password", type="password")
+            if st.form_submit_button("🚀 Login करें"):
+                if u == "admin" and p == "khan786":
+                    st.session_state["password_correct"] = True
+                    st.rerun()
+                else:
+                    st.error("❌ गलत यूजरनाम या पासवर्ड")
+    return False
+
 # ==========================================
 # 🔄 MASTER SYNC FUNCTION (All 15 Tables)
 # ==========================================
@@ -6,8 +59,6 @@ def sync_data_to_supabase():
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से सारी टेबल्स का डेटा पढ़ा जा रहा है... कृपया प्रतीक्षा करें।")
         
-        # 1. डेटाबेस कॉन्फ़िगरेशन (आपकी दी हुई लिस्ट के अनुसार)
-        # फॉर्मेट: "Google Sheet Name": {"table": "supabase_table", "sheet_cols": [...], "db_cols": [...], "num_cols": [...]}
         SYNC_CONFIG = {
             "Bookings": {
                 "table": "bookings",
@@ -101,43 +152,33 @@ def sync_data_to_supabase():
             }
         }
 
-        # 2. प्रोग्रेस बार सेट करना
         progress_bar = st.progress(0)
         total_tables = len(SYNC_CONFIG)
         current_step = 0
         success_logs = []
 
-        # 3. स्मार्ट लूप (हर शीट का डेटा बारी-बारी से प्रोसेस करना)
         for sheet_name, config in SYNC_CONFIG.items():
             try:
                 raw_data = get_sheet_data_for_reports(sheet_name)
                 
                 if raw_data and len(raw_data) > 1:
-                    # डेटाफ्रेम बनाना
                     df = pd.DataFrame(raw_data[1:], columns=config["sheet_cols"])
-                    
-                    # डेटाबेस के हिसाब से कॉलम का नाम बदलना
                     df.columns = config["db_cols"]
-
-                    # डेटा साफ़ करना (Trim & Clean)
                     df = df.fillna("")
+                    
                     for col in df.columns:
                         df[col] = df[col].astype(str).str.strip()
 
-                    # तारीख (Date) वाले कॉलम्स को सही फॉर्मेट (YYYY-MM-DD) में लाना
                     for col in ["date", "trip_date"]:
                         if col in df.columns:
                             df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
-                    # नंबर वाले कॉलम्स को फ्लोट (Float) में बदलना
                     for num_col in config["num_cols"]:
                         if num_col in df.columns:
                             df[num_col] = pd.to_numeric(df[num_col].str.replace(',', ''), errors='coerce').fillna(0.0).astype(float)
 
-                    # खाली जगह को None बनाना (SQL के लिए)
                     df = df.replace(["", "nan", "None", "NaN", "<NA>"], None)
                     
-                    # Supabase में भेजना
                     data_dict = df.to_dict(orient='records')
                     supabase.table(config["table"]).upsert(data_dict).execute()
                     
@@ -148,11 +189,9 @@ def sync_data_to_supabase():
             except Exception as table_error:
                 st.error(f"❌ {sheet_name} टेबल में एरर आया: {table_error}")
             
-            # प्रोग्रेस बार अपडेट करना
             current_step += 1
             progress_bar.progress(current_step / total_tables)
 
-        # 4. फाइनल रिपोर्ट
         st.success("🎉 माइग्रेशन पूरा हुआ!")
         with st.expander("📊 सिंक की गई टेबल्स की रिपोर्ट देखें"):
             for log in success_logs:
@@ -161,3 +200,38 @@ def sync_data_to_supabase():
     except Exception as e:
         st.error(f"❌ मुख्य सिंक एरर: {str(e)}")
         st.exception(e)
+
+# ==========================================
+# 🖥️ MAIN APP LOGIC (Routing & Sidebar)
+# ==========================================
+if check_password():
+    try:
+        from booking import show_booking_page
+        from advance import show_advance_page
+        from dashboard import show_dashboard_page
+        from reports import show_reports_page
+        # अगर आपके और भी पेजेज हैं (जैसे receivable), तो उन्हें यहाँ इम्पोर्ट कर लें
+    except Exception as e:
+        st.error(f"⚠️ फाइल इम्पोर्ट एरर: {e}")
+        st.stop()
+
+    st.sidebar.title("🚛 ERP Menu")
+    if st.sidebar.button("🚪 Logout"):
+        st.session_state["password_correct"] = False
+        st.rerun()
+
+    PAGES = ["🏠 होम", "बुकिंग", "एडवांस", "📊 डैशबोर्ड", "रिपोर्ट्स"]
+    choice = st.sidebar.radio("नेविगेशन", PAGES)
+
+    if choice == "🏠 होम":
+        st.title("BAZPUR UP TRANSPORT")
+        st.write(f"आज की तारीख: {datetime.date.today()}")
+        st.divider()
+        st.subheader("⚙️ डेटा सिंक्रोनाइजेशन")
+        if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
+            sync_data_to_supabase()
+
+    elif choice == "बुकिंग": show_booking_page()
+    elif choice == "एडवांस": show_advance_page()
+    elif choice == "📊 डैशबोर्ड": show_dashboard_page()
+    elif choice == "रिपोर्ट्स": show_reports_page()
