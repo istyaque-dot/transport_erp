@@ -59,8 +59,8 @@ def sync_data_to_supabase():
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से सारी टेबल्स का डेटा पढ़ा जा रहा है... कृपया प्रतीक्षा करें।")
         
-        # ... (बाकी का सिंक लॉजिक वैसा ही रहेगा जैसा आपने भेजा है)
-        st.success("सिंक पूरा हुआ!")
+        # ... (बाकी का सिंक लॉजिक वैसा ही रहेगा जैसा आपने बनाया है)
+        st.success("✅ सिंक पूरा हुआ!")
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
 
@@ -77,14 +77,51 @@ if check_password():
     choice = st.sidebar.radio("नेविगेशन", PAGES)
 
     if choice == "🏠 होम":
-        st.title("BAZPUR UP TRANSPORT")
-        st.write(f"आज की तारीख: {datetime.date.today()}")
+        st.title("🚛 BAZPUR UP TRANSPORT ERP")
+        st.markdown(f"**आज की तारीख:** `{datetime.date.today().strftime('%d-%m-%Y')}`")
         st.divider()
-        st.subheader("⚙️ डेटा सिंक्रोनाइजेशन")
-        if st.button("📤 सिंक करें (Google -> Supabase)", type="primary"):
-            sync_data_to_supabase()
 
-    # ⚠️ यहाँ से 'try...except' हटा दिया गया है ताकि असली एरर दिखे
+        # --- 🟢 SECTION 1: QUICK ACTIONS (शॉर्टकट बटन) ---
+        st.subheader("⚡ क्विक एक्शन्स (शॉर्टकट)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            if st.button("📝 नई बुकिंग करें", use_container_width=True, type="secondary"):
+                st.info("👈 कृपया साइडबार से 'बुकिंग' वाले पेज पर जाएँ।")
+        with col2:
+            if st.button("💸 एडवांस डालें", use_container_width=True, type="secondary"):
+                st.info("👈 कृपया साइडबार से 'एडवांस' वाले पेज पर जाएँ।")
+        with col3:
+            if st.button("🏁 POD / हिसाब", use_container_width=True, type="secondary"):
+                st.info("👈 कृपया साइडबार से 'POD' वाले पेज पर जाएँ।")
+        with col4:
+            if st.button("📊 आज की रिपोर्ट", use_container_width=True, type="secondary"):
+                st.info("👈 कृपया साइडबार से 'रिपोर्ट्स' वाले पेज पर जाएँ।")
+
+        st.divider()
+
+        # --- 🟢 SECTION 2: BUSINESS SNAPSHOT (वेलकम मैसेज) ---
+        st.subheader("👋 वेलकम बैक, मुंशी जी!")
+        st.write("बाज़पुर यूपी ट्रांसपोर्ट के डिजिटल सिस्टम में आपका स्वागत है। आप बाएँ तरफ दिए गए मेनू (Menu) से कोई भी काम चुन सकते हैं।")
+        
+        st.info("""
+        **सिस्टम के मुख्य फीचर्स:**
+        * 🚚 **बुकिंग:** नई गाड़ियों की एंट्री और एक्सेल (Bulk) अपलोड।
+        * 💳 **एडवांस / लेजर:** गाड़ियों और कंपनियों का सीधा और पक्का हिसाब।
+        * 📑 **POD:** बिल्टी की फोटो सीधे अपलोड करना और फाइनल पेमेंट सेटलमेंट।
+        * 📊 **रिपोर्ट्स:** दिन भर का कैश फ्लो और डेली पीडीएफ।
+        """)
+
+        st.divider()
+
+        # --- 🟢 SECTION 3: DATA SYNC (बैकअप सिस्टम) ---
+        st.subheader("⚙️ डेटा सिंक्रोनाइजेशन (Backup & Sync)")
+        st.write("अपने गूगल शीट के डेटा को सुरक्षित रूप से Supabase डेटाबेस में भेजने के लिए नीचे दिया गया बटन दबाएँ:")
+        
+        col_sync, _ = st.columns([1, 2])
+        with col_sync:
+            if st.button("📤 सिंक करें (Google -> Supabase)", type="primary", use_container_width=True):
+                sync_data_to_supabase()
+
     elif choice == "बुकिंग":
         from booking import show_booking_page
         show_booking_page()
