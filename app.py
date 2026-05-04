@@ -59,7 +59,7 @@ def sync_data_to_supabase():
         from reports import get_sheet_data_for_reports 
         st.info("🚀 गूगल शीट से सारी टेबल्स का डेटा पढ़ा जा रहा है... कृपया प्रतीक्षा करें।")
         
-        # ... (बाकी का सिंक लॉजिक वैसा ही रहेगा जैसा आपने बनाया है)
+        # यहाँ आपका सिंक लॉजिक आएगा
         st.success("✅ सिंक पूरा हुआ!")
     except Exception as e:
         st.error(f"❌ सिंक एरर: {str(e)}")
@@ -73,6 +73,7 @@ if check_password():
         st.session_state["password_correct"] = False
         st.rerun()
 
+    # 🟢 नेविगेशन मेनू में 'रिसीवेबल' मौजूद है
     PAGES = ["🏠 होम", "बुकिंग", "एडवांस", "POD", "रिसीवेबल", "लेजर", "📊 डैशबोर्ड", "रिपोर्ट्स"]
     choice = st.sidebar.radio("नेविगेशन", PAGES)
 
@@ -83,19 +84,25 @@ if check_password():
 
         # --- 🟢 SECTION 1: QUICK ACTIONS (शॉर्टकट बटन) ---
         st.subheader("⚡ क्विक एक्शन्स (शॉर्टकट)")
-        col1, col2, col3, col4 = st.columns(4)
+        
+        # 🟢 5 बटन कर दिए गए हैं (कंपनी बैलेंस के लिए नया बटन)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            if st.button("📝 नई बुकिंग करें", use_container_width=True, type="secondary"):
-                st.info("👈 कृपया साइडबार से 'बुकिंग' वाले पेज पर जाएँ।")
+            if st.button("📝 नई बुकिंग", use_container_width=True, type="secondary"):
+                st.info("👈 साइडबार से 'बुकिंग' वाले पेज पर जाएँ।")
         with col2:
-            if st.button("💸 एडवांस डालें", use_container_width=True, type="secondary"):
-                st.info("👈 कृपया साइडबार से 'एडवांस' वाले पेज पर जाएँ।")
+            if st.button("💸 एडवांस", use_container_width=True, type="secondary"):
+                st.info("👈 साइडबार से 'एडवांस' वाले पेज पर जाएँ।")
         with col3:
-            if st.button("🏁 POD / हिसाब", use_container_width=True, type="secondary"):
-                st.info("👈 कृपया साइडबार से 'POD' वाले पेज पर जाएँ।")
+            if st.button("🏁 मुंशी/POD", use_container_width=True, type="secondary"):
+                st.info("👈 साइडबार से 'POD' वाले पेज पर जाएँ।")
         with col4:
-            if st.button("📊 आज की रिपोर्ट", use_container_width=True, type="secondary"):
-                st.info("👈 कृपया साइडबार से 'रिपोर्ट्स' वाले पेज पर जाएँ।")
+            # नया बटन 
+            if st.button("🏢 कंपनी बैलेंस", use_container_width=True, type="primary"):
+                st.info("👈 साइडबार से 'रिसीवेबल' वाले पेज पर जाएँ।")
+        with col5:
+            if st.button("📊 रिपोर्ट्स", use_container_width=True, type="secondary"):
+                st.info("👈 साइडबार से 'रिपोर्ट्स' वाले पेज पर जाएँ।")
 
         st.divider()
 
@@ -105,10 +112,11 @@ if check_password():
         
         st.info("""
         **सिस्टम के मुख्य फीचर्स:**
-        * 🚚 **बुकिंग:** नई गाड़ियों की एंट्री और एक्सेल (Bulk) अपलोड।
-        * 💳 **एडवांस / लेजर:** गाड़ियों और कंपनियों का सीधा और पक्का हिसाब।
-        * 📑 **POD:** बिल्टी की फोटो सीधे अपलोड करना और फाइनल पेमेंट सेटलमेंट।
-        * 📊 **रिपोर्ट्स:** दिन भर का कैश फ्लो और डेली पीडीएफ।
+        * 🚚 **बुकिंग:** नई गाड़ियों की एंट्री और एक्सेल अपलोड।
+        * 💳 **एडवांस / लेजर:** गाड़ियों का सीधा हिसाब।
+        * 📑 **POD:** बिल्टी अपलोड और फाइनल सेटलमेंट।
+        * 🏢 **रिसीवेबल (नया):** कंपनी का बैलेंस और POD डाउनलोड।
+        * 📊 **रिपोर्ट्स:** दिन भर का कैश फ्लो।
         """)
 
         st.divider()
@@ -122,6 +130,7 @@ if check_password():
             if st.button("📤 सिंक करें (Google -> Supabase)", type="primary", use_container_width=True):
                 sync_data_to_supabase()
 
+    # 🟢 पेज राउटिंग सिस्टम
     elif choice == "बुकिंग":
         from booking import show_booking_page
         show_booking_page()
@@ -135,6 +144,7 @@ if check_password():
         show_pod_page()
         
     elif choice == "रिसीवेबल":
+        # 🟢 यह 'रिसीवेबल' आपकी कंपनी बैलेंस वाली नई फाइल को चलाएगा
         from receivable import show_receivable_page
         show_receivable_page()
         
