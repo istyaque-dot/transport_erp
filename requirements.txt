@@ -9,3 +9,4 @@ requests
 Pillow
 supabase
 streamlit-cropper
+pillow-heif

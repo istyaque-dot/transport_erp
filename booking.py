@@ -51,7 +51,7 @@ def prepare_pod_file(uploaded_files, crop_map=None):
     
     a4_images = []
     for index, file in enumerate(uploaded_files):
-        if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
+        if file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")):
             img = get_processed_image(file, crop_map, index)
             
             try:
@@ -755,7 +755,7 @@ def show_booking_page():
                         """, unsafe_allow_html=True)
 
                     gr_files = st.file_uploader(
-                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png"],
+                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"],
                         accept_multiple_files=True,
                         key=f"gr_up_{selected_trip_id}",
                         label_visibility="collapsed"

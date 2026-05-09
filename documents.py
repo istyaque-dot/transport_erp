@@ -39,7 +39,7 @@ def _clean_file_part(value: str) -> str:
 
 
 def _is_image(uploaded_file) -> bool:
-    return uploaded_file.name.lower().endswith((".jpg", ".jpeg", ".png"))
+    return uploaded_file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif"))
 
 
 def _is_pdf(uploaded_file) -> bool:
@@ -344,7 +344,7 @@ def show_documents_upload_page():
     remark = st.text_input("Remark", placeholder="Optional remark")
     files = st.file_uploader(
         "JPG / PNG photos या PDF चुनें",
-        type=["jpg", "jpeg", "png", "pdf"],
+        type=["jpg", "jpeg", "png", "heic", "heif", "pdf"],
         accept_multiple_files=True,
         key=f"doc_upload_{trip_id}_{doc_type}",
     )

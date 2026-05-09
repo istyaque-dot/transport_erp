@@ -165,7 +165,7 @@ def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
         return image_files[0].read()
     a4_pages = []
     for index, file in enumerate(image_files):
-        if not file.name.lower().endswith((".jpg", ".jpeg", ".png")): continue
+        if not file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")): continue
         img = get_processed_image(file, crop_map, index)
         a4_pages.append(image_to_a4(img))
     if not a4_pages: return None
@@ -313,7 +313,7 @@ def show_pod_page():
         if not existing_pod_url:
             with st.container():
                 st.markdown("#### 📄 बिल्टी (POD) अपलोड करें")
-                up_files = st.file_uploader("Upload", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only", label_visibility="collapsed")
+                up_files = st.file_uploader("Upload", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"], accept_multiple_files=True, key="pod_only", label_visibility="collapsed")
                 pod_crop_map = render_crop_tool(up_files, key_prefix=f"pod_only_crop_{trip_id}", title="✂️ POD Crop Tool") if up_files else {}
                 if up_files and st.button("🚀 सेव करें", type="primary", use_container_width=True):
                     save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files, crop_map=pod_crop_map)
@@ -324,7 +324,7 @@ def show_pod_page():
     with col_pod:
         st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
         st.markdown("#### 📄 1. POD अपलोड")
-        up_f = st.file_uploader("Files", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_sep", label_visibility="collapsed")
+        up_f = st.file_uploader("Files", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"], accept_multiple_files=True, key="pod_sep", label_visibility="collapsed")
         pod_sep_crop_map = render_crop_tool(up_f, key_prefix=f"pod_sep_crop_{trip_id}", title="✂️ POD Crop Tool") if up_f else {}
         if up_f and st.button("🚀 PDF सेव करें", use_container_width=True): save_pod_to_drive(db, gr_no, truck_no, trip_id, up_f, crop_map=pod_sep_crop_map)
         st.markdown("</div>", unsafe_allow_html=True)
