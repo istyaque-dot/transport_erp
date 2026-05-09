@@ -8,6 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
 import io
+import json
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
 
@@ -25,7 +26,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client.open("Khan_Transport_ERP")
@@ -36,8 +37,12 @@ def connect_to_sheet():
 
 @st.cache_data(ttl=300)
 def get_owner_ledger_data():
-    db = connect_to_sheet()
-    return db.worksheet("Owner_Ledger").get_all_values()
+    try:
+        db = connect_to_sheet()
+        return db.worksheet("Owner_Ledger").get_all_values()
+    except Exception as e:
+        st.error(f"Owner ledger load error: {e}")
+        return []
 
 @st.cache_data(ttl=300)
 def get_trip_summary(trip_id):
@@ -55,10 +60,20 @@ def get_trip_summary(trip_id):
                 break
 
         adv_data = db.worksheet("Advances").get_all_values()
+        def adv_amount(row):
+            # New schema: total at col 9/index 8. Old schema: amount at col 6/index 5.
+            try:
+                if len(row) > 8:
+                    return int(float(str(row[8]).replace(',', '') or 0))
+                if len(row) > 5:
+                    return int(float(str(row[5]).replace(',', '') or 0))
+            except Exception:
+                return 0
+            return 0
         total_adv = sum(
-            int(float(str(r[8]).replace(',', '') or 0))
+            adv_amount(r)
             for r in adv_data[1:]
-            if len(r) > 8 and str(r[1]).strip() == trip_id
+            if len(r) > 1 and str(r[1]).strip() == trip_id
         )
 
         df_owner_raw = get_owner_ledger_data()
@@ -122,7 +137,7 @@ def upload_to_drive(file_bytes, file_name):
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
-        res = requests.post(WEB_APP_URL, data=payload)
+        res = requests.post(WEB_APP_URL, data=payload, timeout=60)
         result = res.text.strip()
         return result if "Error" not in result else None
     except: return None
@@ -179,8 +194,14 @@ def show_pod_page():
         st.info("कोई पेंडिंग हिसाब नहीं मिला।"); return
 
     df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
+    if df_owner.empty or df_owner.shape[1] < 6:
+        st.info("Owner_Ledger में जरूरी columns नहीं मिले।")
+        return
     EXCLUDE = r"Shortage:|Extra/Detention:|Final Balance:|Final Pay:|POD Link:"
     df_pending = df_owner[~df_owner.iloc[:, 4].astype(str).str.contains(EXCLUDE, case=False, na=False)].iloc[::-1]
+    if df_pending.empty:
+        st.info("कोई पेंडिंग हिसाब नहीं मिला।")
+        return
 
     st.markdown("<hr>", unsafe_allow_html=True)
     col_s1, col_s2 = st.columns([1, 2.5])

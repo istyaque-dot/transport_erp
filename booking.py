@@ -6,6 +6,9 @@ import requests
 import base64
 from PIL import Image
 import io
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from supabase import create_client
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
@@ -19,7 +22,10 @@ def get_supabase_client():
     clean_key = str(st.secrets["supabase"]["key"]).strip()
     return create_client(clean_url, clean_key)
 
-supabase = get_supabase_client()
+try:
+    supabase = get_supabase_client()
+except Exception:
+    supabase = None
 
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
@@ -28,7 +34,7 @@ def upload_to_drive(file_bytes, file_name):
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
-        res = requests.post(WEB_APP_URL, data=payload)
+        res = requests.post(WEB_APP_URL, data=payload, timeout=60)
         result = res.text.strip()
         return result if "Error" not in result else None
     except: return None
@@ -175,6 +181,135 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
         save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt)
         return True
     except: return False
+
+# ==========================================
+# ✅ STABILITY PATCH: Google Sheets mode
+# Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
+# इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
+# ==========================================
+@st.cache_resource(ttl=3000)
+def connect_to_sheet_booking():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    raw = st.secrets["gcp_service_account"]
+    creds_dict = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
+
+def save_booking_to_db(row_data):
+    try:
+        db = connect_to_sheet_booking()
+        db.worksheet("Bookings").append_row(row_data, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Booking save error: {e}")
+        return False
+
+@st.cache_data(ttl=60)
+def get_all_trips():
+    try:
+        db = connect_to_sheet_booking()
+        data = db.worksheet("Bookings").get_all_values()
+        if len(data) <= 1:
+            return pd.DataFrame()
+        max_cols = max(len(r) for r in data)
+        rows = [r + [""] * (max_cols - len(r)) for r in data]
+        header = rows[0]
+        return pd.DataFrame(rows[1:], columns=header)
+    except Exception as e:
+        st.error(f"Booking load error: {e}")
+        return pd.DataFrame()
+
+def update_booking_in_db(trip_id, updated_row):
+    try:
+        db = connect_to_sheet_booking()
+        ws = db.worksheet("Bookings")
+        ids = [str(x).strip() for x in ws.col_values(15)]
+        tid = str(trip_id).strip()
+        if tid in ids:
+            row_index = ids.index(tid) + 1
+            ws.update(f"A{row_index}:P{row_index}", [updated_row])
+            st.cache_data.clear()
+            return True
+        st.error("Trip ID नहीं मिला।")
+        return False
+    except Exception as e:
+        st.error(f"Booking update error: {e}")
+        return False
+
+def save_gr_link_to_db(trip_id, gr_url):
+    try:
+        db = connect_to_sheet_booking()
+        ws = db.worksheet("Bookings")
+        ids = [str(x).strip() for x in ws.col_values(15)]
+        tid = str(trip_id).strip()
+        if tid in ids:
+            row_index = ids.index(tid) + 1
+            ws.update_cell(row_index, 17, gr_url)
+            st.cache_data.clear()
+            return True
+        return False
+    except Exception as e:
+        st.error(f"GR link save error: {e}")
+        return False
+
+def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet_booking()
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        base = [str(date_val), str(trip_id), gr, str(truck_no), str(dest)]
+        db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
+        db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
+        if int(float(uni_amt or 0)) > 0:
+            db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
+        if int(float(ish_amt or 0)) > 0:
+            db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Ledger insert error: {e}")
+        return False
+
+def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet_booking()
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        ledgers = {
+            "Company_Ledger": int(comp_amt),
+            "Owner_Ledger": int(owner_amt),
+            "Universal_Ledger": int(float(uni_amt or 0)),
+            "Ishtyaque_Ledger": int(float(ish_amt or 0)),
+        }
+        for sheet_name, amt in ledgers.items():
+            if amt == 0 and sheet_name in ["Universal_Ledger", "Ishtyaque_Ledger"]:
+                continue
+            ws = db.worksheet(sheet_name)
+            records = ws.get_all_values()
+            row_to_update = -1
+            for i, row in enumerate(records):
+                if len(row) > 1 and str(row[1]).strip() == str(trip_id).strip():
+                    row_to_update = i + 1
+                    break
+            if sheet_name == "Universal_Ledger":
+                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", amt]
+            elif sheet_name == "Ishtyaque_Ledger":
+                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", amt]
+            else:
+                new_row = [str(date_val), str(trip_id), gr, str(truck_no), str(dest), amt]
+            if row_to_update != -1:
+                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row])
+            else:
+                ws.append_row(new_row, table_range="A1")
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Ledger update error: {e}")
+        return False
 
 # ==========================================
 # 🎨 CSS

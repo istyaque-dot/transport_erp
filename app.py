@@ -16,7 +16,10 @@ try:
     clean_key = str(st.secrets["supabase"]["key"]).strip()
     supabase = create_client(clean_url, clean_key)
 except Exception as e:
-    st.error(f"Supabase Secrets Setup Error: {e}")
+    supabase = None
+    # Supabase optional है; Booking/Reports अभी Google Sheets mode में हैं.
+    # st.error केवल तब दिखाएँ जब Supabase feature use हो.
+
 
 # ==========================================
 # 🎨 GLOBAL CSS

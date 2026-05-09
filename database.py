@@ -16,7 +16,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds_dict = json.loads(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
     client = gspread.authorize(creds)
@@ -27,7 +27,7 @@ def connect_to_sheet():
 def upload_to_drive(file_bytes, file_name, folder_id):
     try:
         scope = ["https://www.googleapis.com/auth/drive"]
-        creds_dict = json.loads(st.secrets["gcp_service_account"])
+        creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         service = build('drive', 'v3', credentials=creds)
         meta = {'name': file_name, 'parents': [folder_id]}
@@ -118,7 +118,16 @@ def get_total_advance_for_trip(trip_id):
     try:
         db = connect_to_sheet()
         records = db.worksheet("Advances").get_all_values()
-        return sum([int(float(row[8])) for row in records[1:] if len(row) > 8 and row[1] == trip_id])
+        def adv_amount(row):
+            try:
+                if len(row) > 8:
+                    return int(float(str(row[8]).replace(',', '') or 0))
+                if len(row) > 5:
+                    return int(float(str(row[5]).replace(',', '') or 0))
+            except Exception:
+                return 0
+            return 0
+        return sum(adv_amount(row) for row in records[1:] if len(row) > 1 and str(row[1]).strip() == str(trip_id).strip())
     except: return 0
 
 def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, bank_name, diesel_amt, pump_name):

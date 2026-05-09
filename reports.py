@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
@@ -15,7 +16,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client.open("Khan_Transport_ERP")
@@ -98,7 +99,16 @@ def show_reports_page():
                 
                 # एडवांस का विवरण निकालना
                 all_adv = get_sheet_data_for_reports("Advances")
-                total_adv = sum(int(float(str(r[8]).replace(',', '') or 0)) for r in all_adv[1:] if len(r) > 8 and r[1].strip() == sel_id)
+                def adv_amount(row):
+                    try:
+                        if len(row) > 8:
+                            return int(float(str(row[8]).replace(',', '') or 0))
+                        if len(row) > 5:
+                            return int(float(str(row[5]).replace(',', '') or 0))
+                    except Exception:
+                        return 0
+                    return 0
+                total_adv = sum(adv_amount(r) for r in all_adv[1:] if len(r) > 1 and r[1].strip() == sel_id)
 
                 # फाइनल पेमेंट और POD लिंक
                 all_bal = get_sheet_data_for_reports("Owner_Ledger")
@@ -131,8 +141,13 @@ def show_reports_page():
         st.subheader("🚛 आज दिए गए एडवांस")
         all_adv = get_sheet_data_for_reports("Advances")
         if all_adv:
-            today_adv = [r for r in all_adv[1:] if len(r) > 8 and r[0] == s_date]
-            if today_adv: st.table(pd.DataFrame(today_adv).iloc[:, [2, 3, 5, 6, 8]])
+            today_adv = [r for r in all_adv[1:] if len(r) > 0 and r[0] == s_date]
+            if today_adv:
+                max_cols = max(len(r) for r in today_adv)
+                norm_rows = [r + [""] * (max_cols - len(r)) for r in today_adv]
+                df_today_adv = pd.DataFrame(norm_rows)
+                show_cols = [i for i in [2, 3, 4, 5, 6, 7, 8] if i < df_today_adv.shape[1]]
+                st.table(df_today_adv.iloc[:, show_cols])
             else: st.info("आज कोई एडवांस नहीं दिया गया।")
 
     # --- TAB 5: आज की पेमेंट्स (Cash Flow) ---

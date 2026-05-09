@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE CONNECTION
@@ -14,7 +15,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client.open("Khan_Transport_ERP")
@@ -50,9 +51,11 @@ def show_outstanding_page():
             # 2. एडवांस की मैपिंग
             adv_map = {}
             for r in adv_raw[1:]:
-                if len(r) > 8:
+                if len(r) > 1:
                     tid = str(r[1]).strip()
-                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
+                    # New schema: total at index 8. Old schema: amount at index 5.
+                    amt_cell = r[8] if len(r) > 8 else (r[5] if len(r) > 5 else 0)
+                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(amt_cell)
 
             # 3. लेजर एडजस्टमेंट (Shortage/Extra)
             own_map = {}

@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE 
@@ -16,7 +17,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/spreadsheets"
     ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client.open("Khan_Transport_ERP")
@@ -31,10 +32,18 @@ def get_all_trips():
         return pd.DataFrame()
 
 def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
+    """Save advance in the 9-column schema used by POD/Reports.
+    Columns: Date, Trip ID, Truck, Cash Amt, Bank Amt, Bank Name, Diesel Amt, Pump Name, Total Amt
+    """
     try:
         db = connect_to_sheet()
-        # 6 कॉलम के हिसाब से सेट किया गया है: Date, Trip ID, Truck, Mode, Remarks, Amount
-        row_data = [str(date_val), str(trip_id), str(truck_no), str(mode), str(remarks), int(amount)]
+        amt = int(amount)
+        cash_amt = amt if mode == "Cash" else 0
+        bank_amt = amt if mode in ["Canara 311", "Canara 41", "BOB", "Canara 1747"] else 0
+        diesel_amt = amt if mode == "Pump (Shekh Filling)" else 0
+        bank_name = mode if bank_amt else "N/A"
+        pump_name = "Shekh Filling" if diesel_amt else "N/A"
+        row_data = [str(date_val), str(trip_id), str(truck_no), cash_amt, bank_amt, bank_name, diesel_amt, pump_name, amt]
         db.worksheet("Advances").append_row(row_data, table_range="A1")
 
         s_map = {
@@ -49,16 +58,16 @@ def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
         if ledger_name:
             if mode == "Canara 1747":
                 db.worksheet(ledger_name).append_row(
-                    [str(date_val), "Advance", f"Truck: {truck_no}", -int(amount)],
+                    [str(date_val), "Advance", f"Truck: {truck_no}", -amt],
                     table_range="A1")
             else:
                 db.worksheet(ledger_name).append_row(
-                    [str(date_val), "Advance", "Debit",
-                     f"Truck: {truck_no} | {remarks}", -int(amount)],
+                    [str(date_val), str(trip_id), "Debit", f"Advance: {truck_no} | {remarks}", -amt],
                     table_range="A1")
         st.cache_data.clear()
         return True
-    except:
+    except Exception as e:
+        st.error(f"Advance save error: {e}")
         return False
 
 # ==========================================

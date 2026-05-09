@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
@@ -17,7 +18,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/spreadsheets"
     ]
     # Streamlit secrets से सीधा डिक्शनरी उठाना
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
     client = gspread.authorize(creds)

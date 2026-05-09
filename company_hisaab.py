@@ -4,6 +4,7 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE
@@ -17,7 +18,7 @@ def connect_to_sheet():
         "https://www.googleapis.com/auth/spreadsheets"
     ]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(
-        dict(st.secrets["gcp_service_account"]), scope)
+        json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"]), scope)
     return gspread.authorize(creds).open("Khan_Transport_ERP")
 
 @st.cache_data(ttl=120)
