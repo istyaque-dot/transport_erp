@@ -18,7 +18,6 @@ from sheet_utils import (
     format_trip_label,
     invalidate_sheet_cache,
     safe_cell,
-    trip_matches,
 )
 
 # Current Google Apps Script upload endpoint used in existing Booking/POD modules.
@@ -37,6 +36,25 @@ def _clean_file_part(value: str) -> str:
     text = re.sub(r"[^A-Za-z0-9_\-]+", "_", text)
     text = re.sub(r"_+", "_", text).strip("_")
     return text or "NA"
+
+
+def _number_key(value: str) -> str:
+    """Normalize GR/truck numbers for exact search.
+    Example: UK 18 CA 9128, UK-18-CA-9128 and uk18ca9128 become same key.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+
+
+def _exact_gr_or_truck_match(gr_no: str, truck_no: str, query: str) -> bool:
+    q = _number_key(query)
+    if not q:
+        return True
+    return q in {_number_key(gr_no), _number_key(truck_no)}
+
+
+def _booking_gr_truck_match(row, query: str) -> bool:
+    # Bookings sheet expected columns: truck index 6, GR index 8.
+    return _exact_gr_or_truck_match(safe_cell(row, 8, ""), safe_cell(row, 6, ""), query)
 
 
 def _is_image(uploaded_file) -> bool:
@@ -297,30 +315,20 @@ def get_owner_ledger_values_for_docs():
 
 
 def _doc_search_match(row, query: str, extra_text: str = "") -> bool:
-    q = str(query or "").strip().lower()
-    if not q:
-        return True
-    terms = [t for t in q.replace("/", " ").replace("|", " ").split() if t]
-    blob = (" ".join([
-        safe_cell(row, 8, ""),   # GR
-        safe_cell(row, 6, ""),   # Truck
-        safe_cell(row, 7, ""),   # Destination
-        safe_cell(row, 0, ""),   # Date
-        safe_cell(row, 14, ""),  # Trip ID
-        str(extra_text or ""),
-    ])).lower()
-    return all(term in blob for term in terms)
+    # Docs Upload search is intentionally restricted to exact GR No / exact Truck No only.
+    # Destination, date, Trip ID and file name are not used for matching in this tab.
+    return _booking_gr_truck_match(row, query)
 
 
 def render_documents_download_search(bookings_df: pd.DataFrame):
     """Search/download panel that supports old POD links and new separate uploads."""
     st.divider()
     st.subheader("📥 Old/New POD-GR Download Search")
-    st.caption("यहाँ पुराने Owner_Ledger POD links, Bookings GR links और नए Documents sheet links एक साथ मिलेंगे।")
+    st.caption("Search केवल exact GR number या exact गाड़ी number से होगा। Destination/Date/Trip ID से search नहीं होगा।")
 
     q = st.text_input(
         "🔍 Download search",
-        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID / File name लिखें",
+        placeholder="Exact GR number या exact गाड़ी number लिखें",
         key="docs_download_search",
     )
     doc_filter = st.selectbox("Document filter", ["All", "POD", "GR / GRD"], key="docs_download_filter")
@@ -371,11 +379,10 @@ def render_documents_download_search(bookings_df: pd.DataFrame):
             dest = item.get("destination") or safe_cell(bk, 7, "")
             date_val = item.get("booking_date") or safe_cell(bk, 0, "")
         else:
-            blob = " ".join(str(item.get(k, "")) for k in ["trip_id", "gr_no", "truck_no", "destination", "booking_date", "source_file", "remark", "doc_type"])
-            if q and not all(term in blob.lower() for term in q.lower().split()):
-                continue
             gr_no = item.get("gr_no", "")
             truck_no = item.get("truck_no", "")
+            if not _exact_gr_or_truck_match(gr_no, truck_no, q):
+                continue
             dest = item.get("destination", "")
             date_val = item.get("booking_date", "")
         add_result(item.get("doc_type", "Document"), tid, gr_no, truck_no, dest, date_val, item.get("url"), "Documents", item.get("source_file", ""))
@@ -440,13 +447,14 @@ def show_documents_upload_page():
 
     search = st.text_input(
         "🔍 Search",
-        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+        placeholder="Exact GR number या exact गाड़ी number लिखें — खाली छोड़ें तो पूरी list",
         key="docs_upload_search",
     )
+    st.caption("Docs Upload में search केवल exact GR number / exact गाड़ी number से होगा।")
 
     filtered_rows = []
     for idx, row in df.iterrows():
-        if trip_matches(row, search):
+        if _booking_gr_truck_match(row, search):
             filtered_rows.append((format_trip_label(row), idx))
 
     st.caption(f"Dropdown में {len(filtered_rows)} trip(s) loaded")
