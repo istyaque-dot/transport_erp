@@ -9,7 +9,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import io
 
 # --- 0. CONNECTION ---
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
 # --- 1. GOOGLE DRIVE UPLOAD ---
 def upload_to_drive(file_bytes, file_name, folder_id):
@@ -31,11 +31,11 @@ def save_booking_to_db(row_data):
     try:
         db = connect_to_sheet()
         db.worksheet("Bookings").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         db = connect_to_sheet()
@@ -51,7 +51,7 @@ def update_booking_in_db(trip_id, updated_row):
         if trip_id in ids:
             row_index = ids.index(trip_id) + 1
             sheet.update(f"A{row_index}:O{row_index}", [updated_row])
-            st.cache_data.clear()
+            invalidate_sheet_cache()
             return True
     except: return False
 
@@ -64,7 +64,7 @@ def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_am
         db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
         db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
         db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -88,7 +88,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
             
             if row_to_update != -1: ws.update(f"A{row_to_update}:F{row_to_update}", [new_row_data])
             else: ws.append_row(new_row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -97,11 +97,11 @@ def save_advance_to_db(row_data):
     try:
         db = connect_to_sheet()
         db.worksheet("Advances").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_total_advance_for_trip(trip_id):
     try:
         db = connect_to_sheet()
@@ -128,7 +128,7 @@ def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, ban
             s_name = {"canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(bank_name)
             if s_name: db.worksheet(s_name).append_row(base + [-int(bank_amt)], table_range="A1")
         if int(diesel_amt) > 0: db.worksheet("Shekh_Filling_Ledger").append_row(base + [int(diesel_amt)], table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -136,10 +136,10 @@ def save_advance_ledgers(date_val, trip_id, gr_no, dest, cash_amt, bank_amt, ban
 def save_receivable_to_db(row_data):
     try:
         db = connect_to_sheet(); db.worksheet("Receivables").append_row(row_data, table_range="A1")
-        st.cache_data.clear(); return True
+        invalidate_sheet_cache(); return True
     except: return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_total_received_for_trip(trip_id):
     try:
         db = connect_to_sheet()
@@ -154,7 +154,7 @@ def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, recei
         base = [str(date_val), str(trip_id), str(gr_no), desc]
         s_name = {"Cash":"Cash_Ledger", "canara bank 311":"Canara_311_Ledger", "canara bank 41":"Canara_41_Ledger", "bob":"BOB_Ledger"}.get(bank_name)
         if s_name: db.worksheet(s_name).append_row(base + [int(received_amt)], table_range="A1")
-        st.cache_data.clear(); return True
+        invalidate_sheet_cache(); return True
     except: return False
 
 def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
@@ -169,7 +169,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "N/A", "N/A", f"From: {from_acc}", amt], table_range="A1")
             else:
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc}", amt], table_range="A1")
-        st.cache_data.clear(); return True
+        invalidate_sheet_cache(); return True
     except: return False
 
 # --- 5. DAY BOOK LOGIC ---
@@ -177,7 +177,7 @@ def save_daybook_to_db(row_data):
     try:
         db = connect_to_sheet()
         db.worksheet("Day_Book").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -191,19 +191,19 @@ def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, r
         if s_name:
             db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
         
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
 # --- 6. REPORTS, DASHBOARD & POD ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_sheet_data_for_reports(sheet_name):
     try:
         db = connect_to_sheet(); data = db.worksheet(sheet_name).get_all_values()
         return pd.DataFrame(data[1:], columns=data[0]) if len(data) > 1 else pd.DataFrame()
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_ledger_stats(sheet_name):
     """Get balance for a specific ledger"""
     df = get_sheet_data_for_reports(sheet_name)
@@ -212,7 +212,7 @@ def get_ledger_stats(sheet_name):
         return {"balance": int(df.iloc[:, -1].sum())}
     return {"balance": 0}
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_dashboard_stats():
     stats = {"total_freight": 0, "total_trips": 0, "total_advance": 0, "total_cleared": 0}
     try:
@@ -240,7 +240,7 @@ def get_dashboard_stats():
         return stats
     except: return stats
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_company_shortage(trip_id):
     df = get_sheet_data_for_reports("Company_PODs")
     if not df.empty:
@@ -251,7 +251,7 @@ def get_company_shortage(trip_id):
 def save_company_pod_status(date_val, trip_id, gr_no, truck_no, shortage):
     try:
         db = connect_to_sheet(); db.worksheet("Company_PODs").append_row([str(date_val), str(trip_id), str(gr_no), str(truck_no), "Submitted", int(shortage)], table_range="A1")
-        st.cache_data.clear(); return True
+        invalidate_sheet_cache(); return True
     except: return False
 
 def save_owner_adjustment(date_val, trip_id, gr_no, amount, remarks):
@@ -259,6 +259,6 @@ def save_owner_adjustment(date_val, trip_id, gr_no, amount, remarks):
         db = connect_to_sheet()
         base_data = [str(date_val), str(trip_id), str(gr_no), "Adjustment / Penalty", remarks]
         db.worksheet("Owner_Ledger").append_row(base_data + [int(amount)], table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False

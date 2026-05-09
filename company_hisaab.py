@@ -10,16 +10,16 @@ import json
 # 🗄️ DATABASE
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         data = connect_to_sheet().worksheet("Bookings").get_all_values()
         return pd.DataFrame(data[1:], columns=data[0]) if len(data) > 1 else pd.DataFrame()
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_company_balance_details(trip_id):
     try:
         data  = connect_to_sheet().worksheet("Company_Ledger").get_all_values()
@@ -31,7 +31,7 @@ def get_company_balance_details(trip_id):
         return total
     except: return 0
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_pod_link(trip_id):
     try:
         data = connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
@@ -74,7 +74,7 @@ def save_company_payment(date_val, trip_id, gr_no, truck_no,
                         [str(date_val), trip_id, gr_no,
                          f"Comp Pay: {truck_no} | {remarks}", int(pay_received)],
                         table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -226,7 +226,7 @@ def show_company_page():
     with h1: st.header("🏢 कंपनी खाता और सेटलमेंट")
     with h2:
         if st.button("🔄 Refresh", type="primary", use_container_width=True):
-            st.cache_data.clear(); st.rerun()
+            invalidate_sheet_cache(); st.rerun()
 
     df_trips = get_all_trips()
     if df_trips.empty:
@@ -396,7 +396,7 @@ def show_company_page():
                         str(datetime.date.today()), trip_id,
                         gr_no, truck_no, pay_rec, bank,
                         shortage, tds, extra, remark):
-                        st.cache_data.clear()
+                        invalidate_sheet_cache()
                         st.success("✅ कंपनी खाता अपडेट हो गया!")
                         time.sleep(1.5); st.rerun()
                     else:

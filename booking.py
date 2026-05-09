@@ -108,7 +108,7 @@ def save_booking_to_db(row_data):
         st.error(f"DB Error: {e}")
         return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         response = supabase.table("bookings").select("*").execute()
@@ -187,19 +187,19 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
 # इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
 # ==========================================
-from sheet_utils import connect_to_sheet as connect_to_sheet_booking
+from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache
 
 def save_booking_to_db(row_data):
     try:
         db = connect_to_sheet_booking()
         db.worksheet("Bookings").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except Exception as e:
         st.error(f"Booking save error: {e}")
         return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         db = connect_to_sheet_booking()
@@ -223,7 +223,7 @@ def update_booking_in_db(trip_id, updated_row):
         if tid in ids:
             row_index = ids.index(tid) + 1
             ws.update(f"A{row_index}:P{row_index}", [updated_row])
-            st.cache_data.clear()
+            invalidate_sheet_cache()
             return True
         st.error("Trip ID नहीं मिला।")
         return False
@@ -240,7 +240,7 @@ def save_gr_link_to_db(trip_id, gr_url):
         if tid in ids:
             row_index = ids.index(tid) + 1
             ws.update_cell(row_index, 17, gr_url)
-            st.cache_data.clear()
+            invalidate_sheet_cache()
             return True
         return False
     except Exception as e:
@@ -258,7 +258,7 @@ def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_am
             db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
         if int(float(ish_amt or 0)) > 0:
             db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except Exception as e:
         st.error(f"Ledger insert error: {e}")
@@ -294,7 +294,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
                 ws.update(f"A{row_to_update}:F{row_to_update}", [new_row])
             else:
                 ws.append_row(new_row, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except Exception as e:
         st.error(f"Ledger update error: {e}")
@@ -578,7 +578,7 @@ def show_booking_page():
                                 d['to_loc'], d['comp_freight'], d['owner_freight'],
                                 final_uni_amt, d['ishtyaque_amt']
                             )
-                            st.cache_data.clear()
+                            invalidate_sheet_cache()
                             st.success(f"✅ गाड़ी {d['truck_no']} की बुकिंग सेव हो गई!")
                             time.sleep(1.5)
                             st.session_state.bk_saving_lock = False
@@ -601,32 +601,58 @@ def show_booking_page():
         if df_trips.empty:
             st.info("कोई पुरानी बुकिंग नहीं मिली।")
         else:
-            df_last = df_trips.tail(50).iloc[::-1]
+            # ✅ Full edit dropdown update
+            # पहले सिर्फ last 50 bookings dropdown में आती थीं. अब पूरी Bookings sheet list आएगी.
+            # Search optional है: खाली छोड़ने पर पूरी list दिखेगी.
+            df_edit = df_trips.copy()
+            if df_edit.shape[1] > 14:
+                df_edit = df_edit[df_edit.iloc[:, 14].astype(str).str.strip() != ""]
+            df_edit = df_edit.iloc[::-1].reset_index(drop=True)
+
+            search_text = st.text_input(
+                "🔎 Booking search",
+                placeholder="गाड़ी नंबर / GR / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
+            ).strip().lower()
+
+            if search_text and df_edit.shape[1] > 14:
+                def _match_edit_row(row):
+                    cols_to_search = [0, 6, 7, 8, 14]
+                    joined = " ".join(
+                        str(row.iloc[i]) for i in cols_to_search
+                        if i < len(row) and pd.notna(row.iloc[i])
+                    ).lower()
+                    return search_text in joined
+                df_edit = df_edit[df_edit.apply(_match_edit_row, axis=1)].reset_index(drop=True)
+
+            st.caption(f"Dropdown में {len(df_edit)} booking(s) loaded | Total bookings: {len(df_trips)}")
+
             labels, trip_ids = [], []
-            for _, row in df_last.iterrows():
+            for _, row in df_edit.iterrows():
                 try:
-                    gr_disp = (str(row.iloc[8])
-                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).lower() != "nan"
+                    gr_disp = (str(row.iloc[8]).strip()
+                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).strip().lower() not in ["", "nan"]
                                else "N/A")
+                    trip_disp = str(row.iloc[14]).strip() if len(row) > 14 else "N/A"
                     labels.append(
                         f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  "
-                        f"📍 {row.iloc[7]}  |  GR: {gr_disp}"
+                        f"📍 {row.iloc[7]}  |  GR: {gr_disp}  |  Trip: {trip_disp}"
                     )
-                    trip_ids.append(str(row.iloc[14]))
-                except: pass
+                    trip_ids.append(trip_disp)
+                except Exception:
+                    pass
 
-            selected_label = st.selectbox(
+            selected_idx = st.selectbox(
                 "✏️ एडिट करने के लिए गाड़ी चुनें:",
-                ["चुनें..."] + labels
+                ["चुनें..."] + list(range(len(labels))),
+                format_func=lambda x: "चुनें..." if x == "चुनें..." else labels[x]
             )
             st.markdown("<hr style='margin:0.5em 0;border-color:#e2e8f0'>",
                         unsafe_allow_html=True)
 
-            if selected_label != "चुनें...":
-                idx = labels.index(selected_label)
-                selected_trip_id = trip_ids[idx]
-                row_data = df_last[
-                    df_last.iloc[:, 14].astype(str) == selected_trip_id
+            if selected_idx != "चुनें...":
+                selected_trip_id = trip_ids[selected_idx]
+                row_data = df_edit[
+                    df_edit.iloc[:, 14].astype(str).str.strip() == selected_trip_id
                 ].iloc[0]
 
                 col_edit, col_gr = st.columns([2.2, 1], gap="small")
@@ -695,7 +721,7 @@ def show_booking_page():
                                         e_date, selected_trip_id, final_gr, e_truck, e_to,
                                         e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt
                                     )
-                                    st.cache_data.clear()
+                                    invalidate_sheet_cache()
                                     st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
                                     time.sleep(1.5)
                                     st.rerun()
@@ -751,7 +777,7 @@ def show_booking_page():
                                         gr_url = (d_id if d_id.startswith("http")
                                                   else f"https://drive.google.com/file/d/{d_id}/view")
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
-                                            st.cache_data.clear()
+                                            invalidate_sheet_cache()
                                             st.success("✅ A4 साइज़ GR सेव हो गई!")
                                             time.sleep(1.5)
                                             st.rerun()
@@ -863,7 +889,7 @@ def show_booking_page():
                                 )
                             except: error_count += 1; continue
 
-                    st.cache_data.clear()
+                    invalidate_sheet_cache()
                     if success_count > 0:
                         st.success(f"🎊 {success_count} गाड़ियाँ सफलतापूर्वक सेव हो गईं!")
                     if error_count > 0:

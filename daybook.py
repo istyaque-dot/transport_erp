@@ -10,13 +10,13 @@ import json
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
 def save_daybook_to_db(row_data):
     try:
         db = connect_to_sheet()
         db.worksheet("Day_Book").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 
@@ -46,7 +46,7 @@ def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, r
                 # बाकी लेजर्स का 5-कॉलम फॉर्मेट[cite: 1]
                 db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
         
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except Exception as e: 
         st.error(f"लेजर अपडेट करने में एरर: {e}")

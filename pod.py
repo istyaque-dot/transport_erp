@@ -19,7 +19,7 @@ A4_W, A4_H = 1240, 1754
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
 # ==========================================
 # 📦 DATA FETCHERS
@@ -141,7 +141,7 @@ def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files):
             if d_id:
                 pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
                 db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
-                st.cache_data.clear()
+                invalidate_sheet_cache()
                 st.success("✅ POD सुरक्षित हो गई!")
                 time.sleep(1.5); st.rerun()
             else: st.error("❌ Drive अपलोड फेल!")
@@ -262,5 +262,5 @@ def show_pod_page():
                     if shortage > 0: db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, "Shortage", -int(shortage)])
                     if extra_pay > 0: db.worksheet("Owner_Ledger").append_row([t_date, trip_id, gr_no, truck_no, "Extra/Detention", int(extra_pay)])
                     if save_balance_to_ledgers(db, t_date, trip_id, gr_no, truck_no, final_pay, pay_mode, "Final Settlement"):
-                        st.cache_data.clear(); st.success("🎊 हिसाब बराबर!"); time.sleep(1.5); st.rerun()
+                        invalidate_sheet_cache(); st.success("🎊 हिसाब बराबर!"); time.sleep(1.5); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)

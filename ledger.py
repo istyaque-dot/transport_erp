@@ -3,37 +3,26 @@ import streamlit as st
 
 def show_ledger_page():
     st.header("📒 लेजर / हिसाब-किताब")
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🔀 Transfer",
-        "📓 Day Book",
-        "💸 Outstanding",
-        "🏢 Company Hisaab",
-    ])
+    st.info("Quota-safe mode: Ledger Hub में अब सभी pages एक साथ load नहीं होंगे। नीचे सिर्फ एक section खोलें।")
 
-    with tab1:
-        try:
+    section = st.radio(
+        "Section चुनें",
+        ["🔀 Transfer", "📓 Day Book", "💸 Outstanding", "🏢 Company Hisaab"],
+        horizontal=True,
+    )
+
+    try:
+        if section == "🔀 Transfer":
             from transfer import show_transfer_page
             show_transfer_page()
-        except Exception as e:
-            st.error(f"Transfer page error: {e}")
-
-    with tab2:
-        try:
+        elif section == "📓 Day Book":
             from daybook import show_daybook_page
             show_daybook_page()
-        except Exception as e:
-            st.error(f"Day Book page error: {e}")
-
-    with tab3:
-        try:
+        elif section == "💸 Outstanding":
             from outstanding import show_outstanding_page
             show_outstanding_page()
-        except Exception as e:
-            st.error(f"Outstanding page error: {e}")
-
-    with tab4:
-        try:
+        elif section == "🏢 Company Hisaab":
             from company_hisaab import show_company_page
             show_company_page()
-        except Exception as e:
-            st.error(f"Company Hisaab page error: {e}")
+    except Exception as e:
+        st.error(f"Ledger section error: {e}")

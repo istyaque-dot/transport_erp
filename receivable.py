@@ -10,7 +10,7 @@ import json
 # 🗄️ DATABASE — Google Sheets Connection
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
 def get_all_trips():
     try:
@@ -26,12 +26,12 @@ def get_all_trips():
 def save_receivable_to_db(row_data):
     try:
         connect_to_sheet().worksheet("Receivables").append_row(row_data, table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except:
         return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_total_received_for_trip(trip_id):
     """एक ट्रिप के लिए अब तक कितना पेमेंट आया है"""
     try:
@@ -42,7 +42,7 @@ def get_total_received_for_trip(trip_id):
     except:
         return 0
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_company_shortage(trip_id):
     """कंपनी की शॉर्टेज (कटौती) निकालना"""
     try:
@@ -69,7 +69,7 @@ def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, recei
         
         if s_name:
             db.worksheet(s_name).append_row(base + [int(received_amt)], table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except:
         return False
@@ -77,7 +77,7 @@ def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, recei
 # ==========================================
 # 🏢 GET COMPANY BALANCE & DOCS LOGIC (पुरानी लिस्ट के लिए)
 # ==========================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_company_receivable_and_docs():
     try:
         db = connect_to_sheet()

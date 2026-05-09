@@ -10,9 +10,9 @@ import json
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_ledger_stats(sheet_name):
     """लेजर के आखिरी कॉलम की अंतिम वैल्यू (Current Balance) उठाना"""
     try:
@@ -60,7 +60,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
             else:
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc} | {remarks}", amt], table_range="A1")
         
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 

@@ -8,9 +8,9 @@ import json
 # 🗄️ DATABASE QUERIES (Google Sheets)
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_dashboard_data():
     """Google Sheets से dashboard numbers index-safe तरीके से निकालना."""
     from sheet_utils import worksheet_values, clean_amount
@@ -91,7 +91,7 @@ def show_dashboard_page():
     with h1: st.header("📊 डैशबोर्ड — बिज़नेस समरी (Sheets)")
     with h2:
         if st.button("🔄 Refresh", type="primary", use_container_width=True):
-            st.cache_data.clear()
+            invalidate_sheet_cache()
             st.rerun()
 
     # Get Data

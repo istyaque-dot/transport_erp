@@ -11,7 +11,7 @@ import json
 
 from sheet_utils import connect_to_sheet
 
-@st.cache_data(ttl=5) 
+@st.cache_data(ttl=600) 
 def get_sheet_data_for_reports(sheet_name):
     try:
         db = connect_to_sheet()

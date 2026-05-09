@@ -8,7 +8,7 @@ import json
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
 def clean_amt(val):
     try:
@@ -24,7 +24,7 @@ def show_outstanding_page():
     st.write("यहाँ आप गाड़ी वालों का बाकी बकाया हिसाब देख सकते हैं।")
 
     if st.button("🔄 डेटा रिफ्रेश करें", type="primary"):
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         st.rerun()
 
     try:

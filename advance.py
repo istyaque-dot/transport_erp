@@ -10,9 +10,9 @@ import json
 # 🗄️ DATABASE 
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         db   = connect_to_sheet()
@@ -54,7 +54,7 @@ def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
                 db.worksheet(ledger_name).append_row(
                     [str(date_val), str(trip_id), "Debit", f"Advance: {truck_no} | {remarks}", -amt],
                     table_range="A1")
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except Exception as e:
         st.error(f"Advance save error: {e}")
@@ -237,7 +237,7 @@ def show_advance_page():
     col_r, _ = st.columns([1, 7])
     with col_r:
         if st.button("🔄 Refresh", key="adv_refresh"):
-            st.cache_data.clear()
+            invalidate_sheet_cache()
             st.rerun()
 
     df_trips = get_all_trips()
