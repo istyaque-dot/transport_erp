@@ -8,8 +8,32 @@ st.markdown("""
 [data-testid="stSidebar"] { background: linear-gradient(180deg, #001f5b 0%, #003399 60%, #0055cc 100%) !important; }
 [data-testid="stSidebar"] * { color: white !important; }
 .block-container { padding-top: 1rem !important; max-width: 98% !important; }
-.erp-card { background:#f8faff; border:1px solid #dde3f0; border-left:4px solid #003399; border-radius:12px; padding:14px 18px; margin:8px 0; }
-.erp-small { color:#64748b; font-size:0.86rem; }
+.erp-hero {
+    background: linear-gradient(135deg, #0b2a6f 0%, #0757c9 58%, #00a3ff 100%);
+    border-radius: 22px;
+    padding: 26px 30px;
+    color: white;
+    margin-bottom: 18px;
+    box-shadow: 0 16px 36px rgba(0, 31, 91, 0.18);
+}
+.erp-hero h1 { margin:0; font-size:2.25rem; letter-spacing:-0.04rem; color:white !important; }
+.erp-hero p { margin:8px 0 0 0; color:#dbeafe !important; font-size:1rem; }
+.erp-card {
+    background:#ffffff;
+    border:1px solid #e5eaf3;
+    border-radius:18px;
+    padding:18px 18px;
+    margin:8px 0;
+    box-shadow:0 8px 22px rgba(15, 23, 42, 0.06);
+}
+.erp-card-title { font-size:1.05rem; font-weight:800; margin-bottom:4px; color:#111827; }
+.erp-card-sub { font-size:0.86rem; color:#64748b; }
+.erp-section-title { font-size:1.25rem; font-weight:800; margin:18px 0 6px 0; color:#111827; }
+.stButton > button {
+    border-radius:14px !important;
+    min-height:46px;
+    font-weight:700 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,26 +70,53 @@ def safe_open_page(import_path, function_name):
         st.info("पहले 🧩 Sheet Setup tab चलाएँ। अगर फिर भी error रहे तो Google Sheet tab/header mismatch check करें।")
 
 
+def go_to_page(page_name):
+    st.session_state["page_choice"] = page_name
+
+
 def show_home_page():
-    st.title("🚛 BAZPUR UP TRANSPORT ERP")
-    st.markdown(f"**आज की तारीख:** `{datetime.date.today().strftime('%d-%m-%Y')}`")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Backend", "Google Sheets")
-    c2.metric("Mode", "Live")
-    c3.metric("Version", "All Tabs Update")
-    c4.metric("Status", "Safe Patch")
-
-    st.markdown("""
-    <div class='erp-card'>
-    <b>Active tabs:</b> Booking, Advance, POD, Receivable, Outstanding, Ledger, Dashboard, Reports,
-    Day Book, Transfer, Company Hisaab, Sheet Setup.
-    <br><span class='erp-small'>Supabase sync को operational flow से हटाया गया है ताकि backend mixed न रहे।</span>
+    today = datetime.date.today().strftime('%d-%m-%Y')
+    st.markdown(f"""
+    <div class='erp-hero'>
+        <h1>🚛 BAZPUR UP TRANSPORT ERP</h1>
+        <p>आज की तारीख: <b>{today}</b></p>
     </div>
     """, unsafe_allow_html=True)
 
-    st.subheader("Recommended first run")
-    st.write("1. Sidebar से **🧩 Sheet Setup** खोलें। 2. Required Sheets Check/Create चलाएँ। 3. फिर Booking → Advance → POD → Receivable test करें।")
+    st.markdown("<div class='erp-section-title'>Quick Actions</div>", unsafe_allow_html=True)
+    q1, q2, q3 = st.columns(3)
+    with q1:
+        if st.button("📝 New Booking", use_container_width=True):
+            go_to_page("📝 Booking")
+            st.rerun()
+        if st.button("📤 POD / GR Upload", use_container_width=True):
+            go_to_page("📤 Docs Upload")
+            st.rerun()
+    with q2:
+        if st.button("💸 Advance Entry", use_container_width=True):
+            go_to_page("💸 Advance")
+            st.rerun()
+        if st.button("📥 Receivable", use_container_width=True):
+            go_to_page("📥 Receivable")
+            st.rerun()
+    with q3:
+        if st.button("🏁 POD Settlement", use_container_width=True):
+            go_to_page("🏁 POD")
+            st.rerun()
+        if st.button("📑 Reports", use_container_width=True):
+            go_to_page("📑 Reports")
+            st.rerun()
+
+    st.markdown("<div class='erp-section-title'>Main Work Flow</div>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("<div class='erp-card'><div class='erp-card-title'>1. Booking</div><div class='erp-card-sub'>Trip entry और GR detail</div></div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div class='erp-card'><div class='erp-card-title'>2. Advance</div><div class='erp-card-sub'>Driver/party advance entry</div></div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown("<div class='erp-card'><div class='erp-card-title'>3. POD / Docs</div><div class='erp-card-sub'>POD, GR, bill copy upload</div></div>", unsafe_allow_html=True)
+    with c4:
+        st.markdown("<div class='erp-card'><div class='erp-card-title'>4. Hisaab</div><div class='erp-card-sub'>Receivable, ledger, report</div></div>", unsafe_allow_html=True)
 
 
 if check_password():
@@ -91,7 +142,9 @@ if check_password():
         "🧩 Sheet Setup": ("sheet_setup", "show_sheet_setup_page"),
     }
 
-    choice = st.sidebar.radio("नेविगेशन", list(PAGES.keys()))
+    if "page_choice" not in st.session_state or st.session_state["page_choice"] not in PAGES:
+        st.session_state["page_choice"] = "🏠 Home"
+    choice = st.sidebar.radio("नेविगेशन", list(PAGES.keys()), key="page_choice")
     target, func = PAGES[choice]
     if callable(target):
         target()
