@@ -10,7 +10,7 @@ import json
 # 🗄️ DATABASE — Google Sheets Connection
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
 def get_all_trips():
     try:
@@ -115,6 +115,7 @@ def get_company_receivable_and_docs():
                         "GR नंबर": str(r[8]),
                         "गाड़ी नंबर": str(r[6]),
                         "कहाँ तक": str(r[7]),
+                        "Trip ID": trip_id,
                         "कंपनी का भाड़ा (₹)": int(comp_freight),
                         "GR (बिल्टी)": gr_link,
                         "POD (रिसीविंग)": pod_link
@@ -160,14 +161,16 @@ def show_receivable_page():
         if df.empty:
             st.info("कोई बुकिंग नहीं मिली। पहले गाड़ी लोड करें।")
         else:
-            # ── Trip Selector ──
-            df_last = df.iloc[::-1].copy()
-            df_last['label'] = (
-                "📅 " + df_last.iloc[:, 0].astype(str) + "  |  " +
-                "🚛 " + df_last.iloc[:, 6].astype(str) + "  |  " +
-                "🏢 " + df_last.iloc[:, 2].astype(str) + "  |  " +
-                "📄 GR: " + df_last.iloc[:, 8].astype(str)
+            # ── Trip Selector: full list + global search sequence ──
+            df_last = df.iloc[::-1].copy().reset_index(drop=True)
+            search_text = st.text_input(
+                "🔎 Trip search",
+                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+                key=f"rec_trip_search_{c}"
             )
+            df_last = filter_trip_dataframe(df_last, search_text)
+            df_last['label'] = df_last.apply(format_trip_label, axis=1)
+            st.caption(f"Dropdown में {len(df_last)} trip(s) loaded")
 
             selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_rec_{c}", label_visibility="collapsed")
             if selected == "चुनें...":
@@ -255,6 +258,15 @@ def show_receivable_page():
             
             if company_data:
                 df_comp = pd.DataFrame(company_data)
+                search_docs = st.text_input(
+                    "🔎 Data search",
+                    placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+                    key="rec_docs_search"
+                ).strip().lower()
+                if search_docs:
+                    cols = [c for c in ["GR नंबर", "गाड़ी नंबर", "कहाँ तक", "तारीख", "Trip ID"] if c in df_comp.columns]
+                    df_comp = df_comp[df_comp[cols].astype(str).agg(" ".join, axis=1).str.lower().str.contains(search_docs, na=False)]
+                st.caption(f"{len(df_comp)} record(s) found")
                 
                 st.dataframe(
                     df_comp,
@@ -263,6 +275,7 @@ def show_receivable_page():
                         "GR नंबर": st.column_config.TextColumn("GR नंबर", width="small"),
                         "गाड़ी नंबर": st.column_config.TextColumn("गाड़ी नंबर", width="medium"),
                         "कहाँ तक": st.column_config.TextColumn("कहाँ तक", width="medium"),
+                        "Trip ID": st.column_config.TextColumn("Trip ID", width="medium"),
                         "कंपनी का भाड़ा (₹)": st.column_config.NumberColumn("कंपनी भाड़ा (₹)", format="₹%d", width="small"),
                         "GR (बिल्टी)": st.column_config.LinkColumn("📄 GR कॉपी", display_text="📥 Download GR"),
                         "POD (रिसीविंग)": st.column_config.LinkColumn("🏁 POD कॉपी", display_text="📥 Download POD")

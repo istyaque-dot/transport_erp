@@ -10,7 +10,7 @@ import json
 # 🗄️ DATABASE
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
 @st.cache_data(ttl=600)
 def get_all_trips():
@@ -232,24 +232,30 @@ def show_company_page():
     if df_trips.empty:
         st.info("कोई डेटा नहीं मिला।"); return
 
-    # ── Trip Selector ──
-    df_last = df_trips.tail(150).iloc[::-1]
+    # ── Trip Selector: full list + global search sequence ──
+    df_last = df_trips.iloc[::-1].reset_index(drop=True)
+    search_text = st.text_input(
+        "🔎 Trip search",
+        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+        key="company_trip_search"
+    )
+    df_last = filter_trip_dataframe(df_last, search_text)
+    st.caption(f"Dropdown में {len(df_last)} trip(s) loaded | Total bookings: {len(df_trips)}")
+
     labels, trip_ids = [], []
     for _, row in df_last.iterrows():
         try:
-            gr = str(row.iloc[8]) if str(row.iloc[8]).lower() not in ("nan","") else "—"
-            labels.append(
-                f"🚛 {row.iloc[6]}  |  📅 {str(row.iloc[0])[:10]}  |  "
-                f"📍 {row.iloc[7]}  |  GR: {gr}")
-            trip_ids.append(str(row.iloc[14]))
-        except: pass
+            labels.append(format_trip_label(row))
+            trip_ids.append(safe_cell(row, 14, ""))
+        except Exception:
+            pass
 
     selected = st.selectbox(
         "गाड़ी खोजें:", ["चुनें..."] + labels,
         label_visibility="collapsed")
 
     if selected == "चुनें...":
-        st.caption("👆 GR नंबर, गाड़ी नंबर या कंपनी का नाम टाइप करके खोजें।")
+        st.caption("👆 GR / गाड़ी नंबर / Destination / Date / Trip ID से search करें।")
         return
 
     idx      = labels.index(selected)

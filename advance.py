@@ -10,7 +10,7 @@ import json
 # 🗄️ DATABASE 
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
 @st.cache_data(ttl=600)
 def get_all_trips():
@@ -246,16 +246,27 @@ def show_advance_page():
         st.info("⚠️ कोई बुकिंग नहीं मिली। पहले 'बुकिंग' पेज से गाड़ी लगाएँ।")
         return
 
-    # ── Trip selector ──
-    df_last = df_trips.tail(50).iloc[::-1]
-    labels, trip_ids, truck_nos = [], [], []
+    # ── Trip selector: full list + global search sequence ──
+    df_all = df_trips.copy()
+    if df_all.shape[1] > 14:
+        df_all = df_all[df_all.iloc[:, 14].astype(str).str.strip() != ""]
+    df_all = df_all.iloc[::-1].reset_index(drop=True)
 
-    for _, row in df_last.iterrows():
+    search_text = st.text_input(
+        "🔎 Trip search",
+        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+        key="adv_trip_search"
+    )
+    df_show = filter_trip_dataframe(df_all, search_text)
+    st.caption(f"Dropdown में {len(df_show)} trip(s) loaded | Total bookings: {len(df_all)}")
+
+    labels, trip_ids, truck_nos = [], [], []
+    for _, row in df_show.iterrows():
         try:
-            labels.append(f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  📍 {row.iloc[7]}")
-            trip_ids.append(str(row.iloc[14]))
-            truck_nos.append(str(row.iloc[6]))
-        except:
+            labels.append(format_trip_label(row))
+            trip_ids.append(safe_cell(row, 14, ""))
+            truck_nos.append(safe_cell(row, 6, ""))
+        except Exception:
             pass
 
     selected_label = st.selectbox(
@@ -272,7 +283,7 @@ def show_advance_page():
     sel_truck_no = truck_nos[idx]
 
     # ── Trip Info Card ──
-    sel_row = df_last[df_last.iloc[:, 14].astype(str) == sel_trip_id].iloc[0]
+    sel_row = df_show[df_show.iloc[:, 14].astype(str) == sel_trip_id].iloc[0]
     try:
         dest      = str(sel_row.iloc[7])
         trip_date = str(sel_row.iloc[0])

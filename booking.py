@@ -187,7 +187,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
 # इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
 # ==========================================
-from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
 def save_booking_to_db(row_data):
     try:
@@ -611,7 +611,7 @@ def show_booking_page():
 
             search_text = st.text_input(
                 "🔎 Booking search",
-                placeholder="गाड़ी नंबर / GR / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
+                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
             ).strip().lower()
 
             if search_text and df_edit.shape[1] > 14:
@@ -633,10 +633,7 @@ def show_booking_page():
                                if pd.notna(row.iloc[8]) and str(row.iloc[8]).strip().lower() not in ["", "nan"]
                                else "N/A")
                     trip_disp = str(row.iloc[14]).strip() if len(row) > 14 else "N/A"
-                    labels.append(
-                        f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  "
-                        f"📍 {row.iloc[7]}  |  GR: {gr_disp}  |  Trip: {trip_disp}"
-                    )
+                    labels.append(format_trip_label(row))
                     trip_ids.append(trip_disp)
                 except Exception:
                     pass

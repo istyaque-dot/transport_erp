@@ -19,7 +19,7 @@ A4_W, A4_H = 1240, 1754
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell, trip_matches
 
 # ==========================================
 # 📦 DATA FETCHERS
@@ -32,6 +32,15 @@ def get_owner_ledger_data():
         return db.worksheet("Owner_Ledger").get_all_values()
     except Exception as e:
         st.error(f"Owner ledger load error: {e}")
+        return []
+
+@st.cache_data(ttl=300)
+def get_bookings_data_for_pod():
+    try:
+        db = connect_to_sheet()
+        return db.worksheet("Bookings").get_all_values()
+    except Exception as e:
+        st.error(f"Bookings load error: {e}")
         return []
 
 @st.cache_data(ttl=300)
@@ -194,16 +203,43 @@ def show_pod_page():
         return
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    col_s1, col_s2 = st.columns([1, 2.5])
-    with col_s1: search_gr = st.text_input("🔍 खोजें (GR No):")
-    df_show = df_pending[df_pending.iloc[:, 2].astype(str).str.contains(search_gr.strip(), case=False, na=False)] if search_gr else df_pending
-    choices = [f"GR: {r.iloc[2]} | 🚛 {r.iloc[3]} | 📍 {r.iloc[4]} | ID: {r.iloc[1]}" for _, r in df_show.iterrows()]
+    # Build booking lookup so POD search also supports Destination and Date.
+    bk_raw = get_bookings_data_for_pod()
+    bk_map = {str(r[14]).strip(): r for r in bk_raw[1:] if len(r) > 14} if len(bk_raw) > 1 else {}
+
+    search_gr = st.text_input(
+        "🔍 Search",
+        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+        key="pod_global_search"
+    )
+
+    choice_rows = []
+    seen_trip_ids = set()
+    for _, r in df_pending.iterrows():
+        tid = safe_cell(r, 1, "")
+        if tid in seen_trip_ids:
+            continue
+        seen_trip_ids.add(tid)
+        bk_row = bk_map.get(tid)
+        label = format_trip_label(bk_row) if bk_row else f"GR: {safe_cell(r,2,'N/A')} | 🚛 {safe_cell(r,3,'N/A')} | 📍 N/A | 📅 N/A | ID: {tid}"
+        blob_row = bk_row if bk_row else ["", "", "", "", "", "", safe_cell(r,3,''), "", safe_cell(r,2,''), "", "", "", "", "", tid]
+        if trip_matches(blob_row, search_gr):
+            choice_rows.append((label, tid))
+    st.caption(f"Dropdown में {len(choice_rows)} pending trip(s) loaded")
+    choices = [x[0] for x in choice_rows]
 
     selected = st.selectbox("📝 गाड़ी चुनें", ["चुनें..."] + choices, label_visibility="collapsed")
     if selected == "चुनें...": st.info("👆 ऊपर से गाड़ी चुनें।"); return
 
-    parts = selected.split(" | ")
-    gr_no, truck_no, trip_id = parts[0].replace("GR: ", ""), parts[1].replace("🚛 ", ""), parts[3].replace("ID: ", "")
+    trip_id = selected.split("ID: ")[-1].strip()
+    selected_bk = bk_map.get(trip_id)
+    if selected_bk:
+        gr_no = safe_cell(selected_bk, 8, "N/A")
+        truck_no = safe_cell(selected_bk, 6, "N/A")
+    else:
+        parts = selected.split(" | ")
+        gr_no = parts[0].replace("GR: ", "") if len(parts) > 0 else "N/A"
+        truck_no = parts[1].replace("🚛 ", "") if len(parts) > 1 else "N/A"
     trip_bk, total_adv, already_adj, existing_pod_url = get_trip_summary(trip_id)
 
     if not trip_bk: st.error("❌ डेटा नहीं मिला।"); return

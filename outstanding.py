@@ -8,7 +8,7 @@ import json
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
 def clean_amt(val):
     try:
@@ -75,8 +75,10 @@ def show_outstanding_page():
                 if balance > 10: # सिर्फ वो गाड़ियाँ जिनका 10 रुपये से ज्यादा बकाया है
                     report_data.append({
                         "तारीख": row.iloc[0],
+                        "GR नंबर": safe_cell(row, 8, "N/A"),
                         "गाड़ी नंबर": truck,
                         "कहाँ तक": row.iloc[7],
+                        "Trip ID": tid,
                         "कुल भाड़ा": f"₹{total_fr:,.0f}",
                         "एडवांस भुगतान": f"₹{paid_adv:,.0f}",
                         "बकाया राशि": balance
@@ -86,7 +88,16 @@ def show_outstanding_page():
             # 5. रिपोर्ट दिखाना
             if report_data:
                 df_final = pd.DataFrame(report_data)
+                search_out = st.text_input(
+                    "🔎 Data search",
+                    placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+                    key="outstanding_search"
+                ).strip().lower()
+                if search_out:
+                    cols = [c for c in ["GR नंबर", "गाड़ी नंबर", "कहाँ तक", "तारीख", "Trip ID"] if c in df_final.columns]
+                    df_final = df_final[df_final[cols].astype(str).agg(" ".join, axis=1).str.lower().str.contains(search_out, na=False)]
                 st.error(f"🔴 कुल मार्केट बकाया: ₹{int(total_pending):,}")
+                st.caption(f"{len(df_final)} record(s) found")
                 
                 # टेबल को स्टाइल करना
                 st.dataframe(

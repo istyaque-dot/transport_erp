@@ -9,7 +9,7 @@ import json
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-from sheet_utils import connect_to_sheet
+from sheet_utils import connect_to_sheet, format_trip_label, filter_trip_dataframe, safe_cell, trip_matches
 
 @st.cache_data(ttl=600) 
 def get_sheet_data_for_reports(sheet_name):
@@ -75,13 +75,21 @@ def show_reports_page():
         st.markdown("### 🚚 गाड़ी का पक्का हिसाब")
         all_bk = get_sheet_data_for_reports("Bookings")
         if len(all_bk) > 1:
-            data_bk = all_bk[1:][::-1]
-            trip_options = [f"🚛 {r[6]} | GR: {r[8]} | ID: {r[14]}" for r in data_bk if len(r) > 14]
+            data_bk = [r for r in all_bk[1:][::-1] if len(r) > 14]
+            search_text = st.text_input(
+                "🔎 Trip search",
+                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
+                key="reports_trip_search"
+            )
+            if search_text:
+                data_bk = [r for r in data_bk if trip_matches(r, search_text)]
+            st.caption(f"Dropdown में {len(data_bk)} trip(s) loaded")
+            trip_options = [format_trip_label(r) for r in data_bk]
             selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + trip_options)
             
             if selected != "चुनें...":
                 sel_id = selected.split("ID: ")[1].strip()
-                trip_row = [r for r in data_bk if len(r) > 14 and r[14] == sel_id][0]
+                trip_row = [r for r in data_bk if len(r) > 14 and str(r[14]).strip() == sel_id][0]
                 
                 # भाड़ा और मुंशीयाना कैलकुलेशन
                 owner_freight = int(float(str(trip_row[12]).replace(',', '') or 0))
@@ -160,12 +168,21 @@ def show_reports_page():
     # --- TAB 6: डॉक्यूमेंट प्रिंट ---
     with tab6:
         st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD)")
-        search_gr = st.text_input("🔍 GR नंबर टाइप करें:")
+        search_gr = st.text_input("🔍 Search", placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID")
         if search_gr:
             all_bk = get_sheet_data_for_reports("Bookings")
-            found = next((r for r in all_bk[1:] if len(r) > 8 and str(r[8]).strip() == search_gr.strip()), None)
-            if found:
-                st.success(f"गाड़ी {found[6]} का डेटा मिल गया!")
-                if len(found) > 16 and "http" in str(found[16]):
-                    st.link_button("📄 GR प्रिंट करें", found[16].strip(), type="primary")
-            else: st.error("GR नहीं मिली।")
+            matches = [r for r in all_bk[1:] if len(r) > 14 and trip_matches(r, search_gr)]
+            if matches:
+                st.caption(f"{len(matches)} record(s) found")
+                labels = [format_trip_label(r) for r in matches]
+                selected_doc = st.selectbox("रिकॉर्ड चुनें", ["चुनें..."] + labels, key="doc_print_select")
+                if selected_doc != "चुनें...":
+                    sel_id = selected_doc.split("ID: ")[1].strip()
+                    found = next((r for r in matches if len(r) > 14 and str(r[14]).strip() == sel_id), None)
+                    if found:
+                        st.success(f"गाड़ी {found[6]} का डेटा मिल गया!")
+                        if len(found) > 16 and "http" in str(found[16]):
+                            st.link_button("📄 GR प्रिंट करें", found[16].strip(), type="primary")
+                        else:
+                            st.warning("इस रिकॉर्ड में GR link नहीं है।")
+            else: st.error("Data नहीं मिला।")
