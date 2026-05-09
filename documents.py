@@ -38,18 +38,109 @@ def _clean_file_part(value: str) -> str:
     return text or "NA"
 
 
-def _number_key(value: str) -> str:
-    """Normalize GR/truck numbers for exact search.
-    Example: UK 18 CA 9128, UK-18-CA-9128 and uk18ca9128 become same key.
+def _number_keys(value: str) -> set[str]:
+    """Normalize GR/truck numbers for strict exact search.
+
+    Rules:
+    - spaces / hyphen / slash / dot separators are ignored for truck numbers.
+    - numeric sheet values like 45.0 are treated as 45.
+    - partial numbers never match: 45 will not match 145, 450, 45A.
     """
-    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    text = str(value or "").strip().upper()
+    if not text:
+        return set()
+
+    keys = {re.sub(r"[^A-Z0-9]", "", text)}
+
+    # Google Sheets sometimes returns numeric GR values as 45.0.
+    compact = re.sub(r"[^0-9.]", "", text)
+    if re.fullmatch(r"\d+(?:\.0+)?", compact or ""):
+        try:
+            keys.add(str(int(float(compact))))
+        except Exception:
+            pass
+
+    # Also support plain numeric strings mixed with labels like GR: 45.0.
+    m = re.search(r"\b(\d+)\.0+\b", text)
+    if m:
+        keys.add(m.group(1))
+
+    return {k for k in keys if k}
+
+
+def _number_key(value: str) -> str:
+    # Backward-compatible helper: first normalized key only.
+    keys = sorted(_number_keys(value), key=len, reverse=True)
+    return keys[0] if keys else ""
 
 
 def _exact_gr_or_truck_match(gr_no: str, truck_no: str, query: str) -> bool:
-    q = _number_key(query)
-    if not q:
+    q_keys = _number_keys(query)
+    if not q_keys:
+        return False
+    gr_keys = _number_keys(gr_no)
+    truck_keys = _number_keys(truck_no)
+    return bool(q_keys & gr_keys) or bool(q_keys & truck_keys)
+
+
+def _exact_token_match(value: str, query: str) -> bool:
+    """Token-safe fallback for old rows where GR/truck is stored as text labels.
+
+    Allows: GR:45, GR 45.0, truck UP18CA9128
+    Blocks: 45 matching 145/450 and 9128 matching UP18CA9128.
+    """
+    q_keys = _number_keys(query)
+    if not q_keys:
+        return False
+    text = str(value or "").upper()
+    compact_text = re.sub(r"[^A-Z0-9]", "", text)
+    for q in q_keys:
+        if not q:
+            continue
+        # Full vehicle number style match, ignoring spaces/hyphen.
+        if any(ch.isalpha() for ch in q) and compact_text == q:
+            return True
+        # Numeric GR token match only. This avoids 45 matching 145/450.
+        if q.isdigit():
+            if re.search(rf"(?<![A-Z0-9]){re.escape(q)}(?:\.0+)?(?![A-Z0-9])", text):
+                return True
+    return False
+
+
+def _old_row_gr_truck_match(row, query: str) -> bool:
+    """Match old Owner_Ledger/Document rows by GR or truck only, not date/destination/trip id.
+
+    Some old rows may have GR/truck in dedicated columns, while some have text like
+    'GR: 45' inside description. This fallback is intentionally token-safe.
+    """
+    if not _number_keys(query):
+        return False
+
+    gr_no = safe_cell(row, 2, "")
+    truck_no = safe_cell(row, 3, "")
+    if _exact_gr_or_truck_match(gr_no, truck_no, query):
         return True
-    return q in {_number_key(gr_no), _number_key(truck_no)}
+
+    # Old/manual rows sometimes place these labels in free text.
+    row_text = " ".join(str(c or "") for c in list(row or []))
+    q_keys = _number_keys(query)
+    for q in q_keys:
+        if not q:
+            continue
+        if q.isdigit():
+            # Search numeric query only near GR labels, not anywhere in row.
+            pattern = rf"\b(?:GR|G\.?R\.?|GR\s*NO|GR\s*NUMBER|BILTY|LR)\s*[:#\-]?\s*{re.escape(q)}(?:\.0+)?\b"
+            if re.search(pattern, row_text, flags=re.I):
+                return True
+        else:
+            # Vehicle number labels / dedicated compact full-token match.
+            compact = re.sub(r"[^A-Z0-9]", "", row_text.upper())
+            if q in {re.sub(r"[^A-Z0-9]", "", truck_no.upper())}:
+                return True
+            pattern = rf"\b(?:TRUCK|VEHICLE|GAADI|GADI|गाड़ी)\s*[:#\-]?\s*{re.escape(q)}\b"
+            if re.search(pattern, compact, flags=re.I):
+                return True
+    return False
 
 
 def _booking_gr_truck_match(row, query: str) -> bool:
@@ -324,7 +415,7 @@ def render_documents_download_search(bookings_df: pd.DataFrame):
     """Search/download panel that supports old POD links and new separate uploads."""
     st.divider()
     st.subheader("📥 Old/New POD-GR Download Search")
-    st.caption("Search केवल exact GR number या exact गाड़ी number से होगा। Destination/Date/Trip ID से search नहीं होगा।")
+    st.caption("Search GR number या पूरी गाड़ी number से होगा। Destination/Date/Trip ID से search नहीं होगा। Partial number block रहेगा।")
 
     q = st.text_input(
         "🔍 Download search",
@@ -332,6 +423,10 @@ def render_documents_download_search(bookings_df: pd.DataFrame):
         key="docs_download_search",
     )
     doc_filter = st.selectbox("Document filter", ["All", "POD", "GR / GRD"], key="docs_download_filter")
+
+    if not _number_keys(q):
+        st.info("Download result देखने के लिए exact GR number या exact गाड़ी number डालें।")
+        return
 
     booking_map = {}
     for _, bk in bookings_df.iterrows():
@@ -342,8 +437,12 @@ def render_documents_download_search(bookings_df: pd.DataFrame):
     results = []
     seen = set()
 
-    def add_result(doc_type, trip_id, gr_no, truck_no, dest, date_val, url, source, file_name=""):
+    def add_result(doc_type, trip_id, gr_no, truck_no, dest, date_val, url, source, file_name="", force_match=False):
         if not url:
+            return
+        # Gate: Docs search must be GR/truck based. Old rows can pass force_match only after
+        # _old_row_gr_truck_match confirms a GR/truck token match.
+        if not force_match and not _exact_gr_or_truck_match(gr_no, truck_no, q):
             return
         if doc_filter == "POD" and "pod" not in str(doc_type).lower():
             return
@@ -395,7 +494,24 @@ def render_documents_download_search(bookings_df: pd.DataFrame):
         for i, link in enumerate(extract_pod_links_from_owner_rows(owner_rows, tid), start=1):
             add_result("POD", tid, safe_cell(bk, 8, ""), safe_cell(bk, 6, ""), safe_cell(bk, 7, ""), safe_cell(bk, 0, ""), link, "Owner_Ledger old POD", f"Old POD {i}")
 
-    # 3) Old/new GR links saved in Bookings col Q/index 16.
+    # 3) Direct fallback scan for old Owner_Ledger rows.
+    # Useful when old POD rows do not have a matching Trip ID but have GR/truck in the row.
+    for row in list(owner_rows or [])[1:]:
+        if not _old_row_gr_truck_match(row, q):
+            continue
+        row_text = " ".join(str(c or "") for c in row)
+        if "pod" not in row_text.lower() and "http" not in row_text.lower() and "drive.google.com" not in row_text.lower():
+            continue
+        tid = safe_cell(row, 1, "")
+        bk = booking_map.get(tid)
+        gr_no = safe_cell(row, 2, "") or (safe_cell(bk, 8, "") if bk is not None else "")
+        truck_no = safe_cell(row, 3, "") or (safe_cell(bk, 6, "") if bk is not None else "")
+        dest = safe_cell(bk, 7, "") if bk is not None else ""
+        date_val = safe_cell(bk, 0, "") if bk is not None else safe_cell(row, 0, "")
+        for i, link in enumerate(extract_links(row_text), start=1):
+            add_result("POD", tid, gr_no, truck_no, dest, date_val, link, "Owner_Ledger old POD direct", f"Old POD {i}", force_match=True)
+
+    # 4) Old/new GR links saved in Bookings col Q/index 16.
     for _, bk in bookings_df.iterrows():
         if not _doc_search_match(bk, q):
             continue
@@ -447,10 +563,14 @@ def show_documents_upload_page():
 
     search = st.text_input(
         "🔍 Search",
-        placeholder="Exact GR number या exact गाड़ी number लिखें — खाली छोड़ें तो पूरी list",
+        placeholder="Exact GR number या exact गाड़ी number लिखें",
         key="docs_upload_search",
     )
-    st.caption("Docs Upload में search केवल exact GR number / exact गाड़ी number से होगा।")
+    st.caption("Docs Upload में GR number या पूरी गाड़ी number से search होगा। Partial number नहीं चलेगा। खाली search पर list नहीं खुलेगी।")
+
+    if not _number_keys(search):
+        st.info("Upload के लिए पहले exact GR number या exact गाड़ी number डालें।")
+        return
 
     filtered_rows = []
     for idx, row in df.iterrows():
@@ -459,7 +579,7 @@ def show_documents_upload_page():
 
     st.caption(f"Dropdown में {len(filtered_rows)} trip(s) loaded")
     if not filtered_rows:
-        st.warning("Search से कोई trip नहीं मिला।")
+        st.warning("Exact GR/गाड़ी number से कोई trip नहीं मिला।")
         return
 
     labels = [x[0] for x in filtered_rows]
