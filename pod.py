@@ -7,6 +7,7 @@ import base64
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
+from crop_utils import get_processed_image, render_crop_tool
 import io
 import json
 
@@ -159,14 +160,13 @@ def image_to_a4(img: Image.Image) -> Image.Image:
     canvas.paste(img_resized, ((canvas_w - new_w) // 2, (canvas_h - new_h) // 2))
     return canvas
 
-def build_a4_pdf(image_files) -> bytes | None:
+def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
     if len(image_files) == 1 and image_files[0].name.lower().endswith(".pdf"):
         return image_files[0].read()
     a4_pages = []
-    for file in image_files:
+    for index, file in enumerate(image_files):
         if not file.name.lower().endswith((".jpg", ".jpeg", ".png")): continue
-        file.seek(0)
-        img = Image.open(file)
+        img = get_processed_image(file, crop_map, index)
         a4_pages.append(image_to_a4(img))
     if not a4_pages: return None
     pdf_bytes = io.BytesIO()
@@ -187,9 +187,9 @@ def upload_to_drive(file_bytes, file_name):
         return result if "Error" not in result else None
     except: return None
 
-def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files):
+def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files, crop_map=None):
     with st.spinner("📄 A4 PDF बन रही है और अपलोड हो रही है..."):
-        final_bytes = build_a4_pdf(up_files)
+        final_bytes = build_a4_pdf(up_files, crop_map=crop_map)
         if final_bytes:
             f_name = f"POD_{gr_no}_{truck_no}.pdf"
             d_id = upload_to_drive(final_bytes, f_name)
@@ -314,8 +314,9 @@ def show_pod_page():
             with st.container():
                 st.markdown("#### 📄 बिल्टी (POD) अपलोड करें")
                 up_files = st.file_uploader("Upload", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_only", label_visibility="collapsed")
+                pod_crop_map = render_crop_tool(up_files, key_prefix=f"pod_only_crop_{trip_id}", title="✂️ POD Crop Tool") if up_files else {}
                 if up_files and st.button("🚀 सेव करें", type="primary", use_container_width=True):
-                    save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files)
+                    save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files, crop_map=pod_crop_map)
         return
 
     # हिसाब बाकी होने पर सेटलमेंट फॉर्म
@@ -324,7 +325,8 @@ def show_pod_page():
         st.markdown("<div class='custom-box'>", unsafe_allow_html=True)
         st.markdown("#### 📄 1. POD अपलोड")
         up_f = st.file_uploader("Files", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True, key="pod_sep", label_visibility="collapsed")
-        if up_f and st.button("🚀 PDF सेव करें", use_container_width=True): save_pod_to_drive(db, gr_no, truck_no, trip_id, up_f)
+        pod_sep_crop_map = render_crop_tool(up_f, key_prefix=f"pod_sep_crop_{trip_id}", title="✂️ POD Crop Tool") if up_f else {}
+        if up_f and st.button("🚀 PDF सेव करें", use_container_width=True): save_pod_to_drive(db, gr_no, truck_no, trip_id, up_f, crop_map=pod_sep_crop_map)
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_pay:

@@ -79,6 +79,7 @@ if check_password():
         "📝 Booking": ("booking", "show_booking_page"),
         "💸 Advance": ("advance", "show_advance_page"),
         "🏁 POD": ("pod", "show_pod_page"),
+        "📤 Docs Upload": ("documents", "show_documents_upload_page"),
         "📥 Receivable": ("receivable", "show_receivable_page"),
         "💸 Outstanding": ("outstanding", "show_outstanding_page"),
         "📒 Ledger Hub": ("ledger", "show_ledger_page"),

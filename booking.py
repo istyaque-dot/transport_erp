@@ -5,6 +5,7 @@ import pandas as pd
 import requests
 import base64
 from PIL import Image
+from crop_utils import get_processed_image, render_crop_tool
 import io
 import json
 import gspread
@@ -40,7 +41,7 @@ def upload_to_drive(file_bytes, file_name):
     except: return None
 
 # 🟢 A4 SIZE PDF LOGIC
-def prepare_pod_file(uploaded_files):
+def prepare_pod_file(uploaded_files, crop_map=None):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
         return uploaded_files[0].read(), "pdf"
@@ -49,10 +50,9 @@ def prepare_pod_file(uploaded_files):
     A4_HEIGHT = 3508
     
     a4_images = []
-    for file in uploaded_files:
+    for index, file in enumerate(uploaded_files):
         if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
-            img = Image.open(file)
-            if img.mode != 'RGB': img = img.convert('RGB')
+            img = get_processed_image(file, crop_map, index)
             
             try:
                 img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
@@ -760,13 +760,19 @@ def show_booking_page():
                         key=f"gr_up_{selected_trip_id}",
                         label_visibility="collapsed"
                     )
+                    gr_crop_map = {}
                     if gr_files:
                         st.caption(f"📎 {len(gr_files)} फ़ाइल चुनी गई")
+                        gr_crop_map = render_crop_tool(
+                            gr_files,
+                            key_prefix=f"booking_gr_crop_{selected_trip_id}",
+                            title="✂️ GR Crop Tool"
+                        )
 
                     if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True):
                         if gr_files:
                             with st.spinner("GR (A4 PDF) Drive पर जा रही है..."):
-                                final_bytes, file_ext = prepare_pod_file(gr_files)
+                                final_bytes, file_ext = prepare_pod_file(gr_files, gr_crop_map)
                                 if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
