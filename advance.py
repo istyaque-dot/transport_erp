@@ -252,6 +252,14 @@ def show_advance_page():
         df_all = df_all[df_all.iloc[:, 14].astype(str).str.strip() != ""]
     df_all = df_all.iloc[::-1].reset_index(drop=True)
 
+    prefill_search = st.session_state.pop("advance_prefill_search", "")
+    prefill_trip_id = st.session_state.pop("advance_prefill_trip_id", "")
+    prefill_notice = st.session_state.pop("advance_prefill_notice", "")
+    if prefill_search:
+        st.session_state["adv_trip_search"] = str(prefill_search).strip()
+    if prefill_notice:
+        st.info(prefill_notice)
+
     search_text = st.text_input(
         "🔎 Trip search",
         placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
@@ -269,8 +277,15 @@ def show_advance_page():
         except Exception:
             pass
 
+    default_select_index = 0
+    if prefill_trip_id and prefill_trip_id in trip_ids:
+        default_select_index = trip_ids.index(prefill_trip_id) + 1
+    elif str(search_text or "").strip() and len(labels) == 1:
+        default_select_index = 1
+
     selected_label = st.selectbox(
         "गाड़ी चुनें:", ["चुनें..."] + labels,
+        index=default_select_index,
         label_visibility="collapsed"
     )
 

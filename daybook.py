@@ -60,6 +60,11 @@ def show_daybook_page():
     st.header("📓 अन्य जमा और खर्च (Credit / Debit)")
     st.write("यहाँ आप ऑफिस का खर्चा, मेंटेनेंस, या कोई भी अन्य लेन-देन सेव कर सकते हैं।")
 
+    quick_expense = st.session_state.pop("daybook_quick_expense", False)
+    quick_note = st.session_state.pop("daybook_quick_note", "")
+    if quick_expense or quick_note:
+        st.info(quick_note or "Dashboard से Expense entry mode खोला गया।")
+
     # Session States
     if "db_ck" not in st.session_state: st.session_state.db_ck = 0
     if "db_confirm" not in st.session_state: st.session_state.db_confirm = False

@@ -556,6 +556,18 @@ def show_documents_upload_page():
         st.info("Bookings sheet में data नहीं मिला।")
         return
 
+    prefill_search = st.session_state.pop("docs_upload_prefill_search", "")
+    prefill_doc_type = st.session_state.pop("docs_upload_prefill_doc_type", "")
+    prefill_notice = st.session_state.pop("docs_upload_prefill_notice", "")
+    if prefill_search:
+        clean_prefill = str(prefill_search).strip()
+        st.session_state["docs_upload_search"] = clean_prefill
+        st.session_state["docs_download_search"] = clean_prefill
+    if prefill_doc_type in ["GR / GRD", "POD"]:
+        st.session_state["docs_upload_doc_type"] = prefill_doc_type
+    if prefill_notice:
+        st.info(prefill_notice)
+
     render_documents_download_search(df)
 
     st.divider()
@@ -583,7 +595,13 @@ def show_documents_upload_page():
         return
 
     labels = [x[0] for x in filtered_rows]
-    selected_label = st.selectbox("📝 Trip चुनें", ["चुनें..."] + labels)
+    selected_index = 1 if len(labels) == 1 else 0
+    selected_label = st.selectbox(
+        "📝 Trip चुनें",
+        ["चुनें..."] + labels,
+        index=selected_index,
+        key=f"docs_upload_trip_select_{_number_key(search)}",
+    )
     if selected_label == "चुनें...":
         return
 
@@ -604,7 +622,7 @@ def show_documents_upload_page():
     c5.metric("Trip ID", trip_id or "N/A")
 
     st.markdown("<div class='doc-card'>", unsafe_allow_html=True)
-    doc_type = st.radio("Document type", ["GR / GRD", "POD"], horizontal=True)
+    doc_type = st.radio("Document type", ["GR / GRD", "POD"], horizontal=True, key="docs_upload_doc_type")
     overwrite_gr = True
     if doc_type == "GR / GRD":
         overwrite_gr = st.checkbox("पुराना GR link replace करें", value=True)
