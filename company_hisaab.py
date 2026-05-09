@@ -11,6 +11,7 @@ import json
 # ==========================================
 
 from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
 
 @st.cache_data(ttl=600)
 def get_all_trips():
@@ -32,15 +33,27 @@ def get_company_balance_details(trip_id):
     except: return 0
 
 @st.cache_data(ttl=600)
-def get_pod_link(trip_id):
+def get_pod_links(trip_id):
+    """Support old Owner_Ledger POD links and new Documents sheet links."""
+    links = []
     try:
-        data = connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
-        for row in data[1:]:
-            if len(row) > 4 and str(row[1]).strip() == str(trip_id).strip():
-                if "POD Link:" in str(row[4]):
-                    return str(row[4]).replace("POD Link:", "").strip()
-        return None
-    except: return None
+        owner_data = connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
+        links.extend(extract_pod_links_from_owner_rows(owner_data, str(trip_id).strip()))
+    except Exception:
+        pass
+    try:
+        doc_data = connect_to_sheet().worksheet("Documents").get_all_values()
+        for item in extract_document_sheet_links(doc_data, str(trip_id).strip(), "POD"):
+            url = item.get("url")
+            if url and url not in links:
+                links.append(url)
+    except Exception:
+        pass
+    return links
+
+def get_pod_link(trip_id):
+    links = get_pod_links(trip_id)
+    return links[0] if links else None
 
 def save_company_payment(date_val, trip_id, gr_no, truck_no,
                          pay_received, bank_name, shortage, tds, extra_km, remarks):
@@ -283,23 +296,25 @@ def show_company_page():
     """, unsafe_allow_html=True)
 
     # ── Documents ──
-    gr_link = None
-    if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
-        gr_link = str(row_data.iloc[16]).strip()
-    pod_link = get_pod_link(trip_id)
+    gr_links = extract_links(row_data.iloc[16]) if len(row_data) > 16 and pd.notna(row_data.iloc[16]) else []
+    gr_link = gr_links[0] if gr_links else None
+    pod_links = get_pod_links(trip_id)
+    pod_link = pod_links[0] if pod_links else None
 
     st.markdown("<div class='pill'>📄 डॉक्यूमेंट्स</div>", unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
-        if gr_link:
+        if gr_links:
             st.markdown("<div class='doc-ok'>✅ GR (बिल्टी) अपलोड है</div>", unsafe_allow_html=True)
-            st.link_button("📄 GR देखें", gr_link, use_container_width=True)
+            for i, link in enumerate(gr_links, start=1):
+                st.link_button(f"📄 GR {i} देखें", link, use_container_width=True)
         else:
             st.markdown("<div class='doc-miss'>⚠️ GR अभी अपलोड नहीं</div>", unsafe_allow_html=True)
     with dc2:
-        if pod_link:
+        if pod_links:
             st.markdown("<div class='doc-ok'>✅ POD (रिसीविंग) अपलोड है</div>", unsafe_allow_html=True)
-            st.link_button("🏁 POD देखें", pod_link, use_container_width=True)
+            for i, link in enumerate(pod_links, start=1):
+                st.link_button(f"🏁 POD {i} देखें", link, use_container_width=True)
         else:
             st.markdown("<div class='doc-miss'>⚠️ POD अभी अपलोड नहीं</div>", unsafe_allow_html=True)
 

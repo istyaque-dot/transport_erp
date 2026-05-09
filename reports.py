@@ -10,6 +10,7 @@ import json
 # ==========================================
 
 from sheet_utils import connect_to_sheet, format_trip_label, filter_trip_dataframe, safe_cell, trip_matches
+from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
 
 @st.cache_data(ttl=600) 
 def get_sheet_data_for_reports(sheet_name):
@@ -110,13 +111,21 @@ def show_reports_page():
 
                 # फाइनल पेमेंट और POD लिंक
                 all_bal = get_sheet_data_for_reports("Owner_Ledger")
-                total_bal_paid, pod_link = 0, ""
+                total_bal_paid, pod_links = 0, []
                 if all_bal:
+                    pod_links.extend(extract_pod_links_from_owner_rows(all_bal, sel_id))
                     for r in all_bal[1:]:
                         if len(r) > 5 and r[1].strip() == sel_id:
-                            if "POD Link:" in str(r[4]): pod_link = str(r[4]).replace("POD Link:", "").strip()
                             if any(k in str(r[4]) for k in ["Final Balance", "Shortage", "Extra"]):
                                 total_bal_paid += int(float(str(r[5]).replace(',', '') or 0))
+                try:
+                    doc_rows = get_sheet_data_for_reports("Documents")
+                    for item in extract_document_sheet_links(doc_rows, sel_id, "POD"):
+                        url = item.get("url")
+                        if url and url not in pod_links:
+                            pod_links.append(url)
+                except Exception:
+                    pass
                 
                 total_bal_paid = abs(total_bal_paid)
                 rem_balance = (owner_freight - munshiyana) - total_adv - total_bal_paid
@@ -128,7 +137,9 @@ def show_reports_page():
                 c3.metric("कुल एडवांस", f"₹{total_adv:,}")
                 c4.metric("बाकी बकाया", f"₹{rem_balance:,}")
 
-                if pod_link: st.link_button("🏁 POD (रिसीविंग) कॉपी देखें", pod_link, use_container_width=True)
+                if pod_links:
+                    for i, pod_link in enumerate(pod_links, start=1):
+                        st.link_button(f"🏁 POD (रिसीविंग) कॉपी {i} देखें", pod_link, use_container_width=True)
 
     # --- TAB 4: आज का काम ---
     with tab4:
@@ -181,8 +192,28 @@ def show_reports_page():
                     found = next((r for r in matches if len(r) > 14 and str(r[14]).strip() == sel_id), None)
                     if found:
                         st.success(f"गाड़ी {found[6]} का डेटा मिल गया!")
-                        if len(found) > 16 and "http" in str(found[16]):
-                            st.link_button("📄 GR प्रिंट करें", found[16].strip(), type="primary")
+                        gr_links = extract_links(found[16]) if len(found) > 16 else []
+                        if gr_links:
+                            for i, link in enumerate(gr_links, start=1):
+                                st.link_button(f"📄 GR {i} प्रिंट/डाउनलोड करें", link, type="primary")
                         else:
                             st.warning("इस रिकॉर्ड में GR link नहीं है।")
+
+                        pod_links = []
+                        all_bal = get_sheet_data_for_reports("Owner_Ledger")
+                        if all_bal:
+                            pod_links.extend(extract_pod_links_from_owner_rows(all_bal, sel_id))
+                        try:
+                            doc_rows = get_sheet_data_for_reports("Documents")
+                            for item in extract_document_sheet_links(doc_rows, sel_id, "POD"):
+                                url = item.get("url")
+                                if url and url not in pod_links:
+                                    pod_links.append(url)
+                        except Exception:
+                            pass
+                        if pod_links:
+                            for i, link in enumerate(pod_links, start=1):
+                                st.link_button(f"🏁 POD {i} प्रिंट/डाउनलोड करें", link, type="secondary")
+                        else:
+                            st.info("इस रिकॉर्ड में POD link नहीं है।")
             else: st.error("Data नहीं मिला।")

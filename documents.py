@@ -10,6 +10,7 @@ import requests
 import streamlit as st
 from PIL import Image, ImageOps
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from doc_link_utils import extract_links, extract_pod_links_from_owner_rows, extract_document_sheet_links
 
 from sheet_utils import (
     connect_to_sheet,
@@ -278,6 +279,140 @@ def append_documents_log(doc_type: str, trip_id: str, gr_no: str, truck_no: str,
         st.warning(f"Documents log save नहीं हुआ: {exc}")
 
 
+
+
+@st.cache_data(ttl=300)
+def get_documents_sheet_values():
+    try:
+        return connect_to_sheet().worksheet("Documents").get_all_values()
+    except Exception:
+        return []
+
+@st.cache_data(ttl=300)
+def get_owner_ledger_values_for_docs():
+    try:
+        return connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
+    except Exception:
+        return []
+
+
+def _doc_search_match(row, query: str, extra_text: str = "") -> bool:
+    q = str(query or "").strip().lower()
+    if not q:
+        return True
+    terms = [t for t in q.replace("/", " ").replace("|", " ").split() if t]
+    blob = (" ".join([
+        safe_cell(row, 8, ""),   # GR
+        safe_cell(row, 6, ""),   # Truck
+        safe_cell(row, 7, ""),   # Destination
+        safe_cell(row, 0, ""),   # Date
+        safe_cell(row, 14, ""),  # Trip ID
+        str(extra_text or ""),
+    ])).lower()
+    return all(term in blob for term in terms)
+
+
+def render_documents_download_search(bookings_df: pd.DataFrame):
+    """Search/download panel that supports old POD links and new separate uploads."""
+    st.divider()
+    st.subheader("📥 Old/New POD-GR Download Search")
+    st.caption("यहाँ पुराने Owner_Ledger POD links, Bookings GR links और नए Documents sheet links एक साथ मिलेंगे।")
+
+    q = st.text_input(
+        "🔍 Download search",
+        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID / File name लिखें",
+        key="docs_download_search",
+    )
+    doc_filter = st.selectbox("Document filter", ["All", "POD", "GR / GRD"], key="docs_download_filter")
+
+    booking_map = {}
+    for _, bk in bookings_df.iterrows():
+        tid = safe_cell(bk, 14, "")
+        if tid:
+            booking_map[tid] = bk
+
+    results = []
+    seen = set()
+
+    def add_result(doc_type, trip_id, gr_no, truck_no, dest, date_val, url, source, file_name=""):
+        if not url:
+            return
+        if doc_filter == "POD" and "pod" not in str(doc_type).lower():
+            return
+        if doc_filter == "GR / GRD" and not any(x in str(doc_type).lower() for x in ["gr", "grd"]):
+            return
+        key = (str(trip_id), str(doc_type), str(url))
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({
+            "doc_type": str(doc_type or ""),
+            "trip_id": str(trip_id or ""),
+            "gr_no": str(gr_no or ""),
+            "truck_no": str(truck_no or ""),
+            "destination": str(dest or ""),
+            "booking_date": str(date_val or "")[:10],
+            "url": url,
+            "source": source,
+            "file_name": str(file_name or ""),
+        })
+
+    # 1) New Documents sheet rows.
+    doc_rows = get_documents_sheet_values()
+    for item in extract_document_sheet_links(doc_rows, None, None):
+        tid = item.get("trip_id", "")
+        bk = booking_map.get(tid)
+        extra = " ".join([item.get("source_file", ""), item.get("remark", ""), item.get("doc_type", "")])
+        if bk is not None:
+            if not _doc_search_match(bk, q, extra):
+                continue
+            gr_no = item.get("gr_no") or safe_cell(bk, 8, "")
+            truck_no = item.get("truck_no") or safe_cell(bk, 6, "")
+            dest = item.get("destination") or safe_cell(bk, 7, "")
+            date_val = item.get("booking_date") or safe_cell(bk, 0, "")
+        else:
+            blob = " ".join(str(item.get(k, "")) for k in ["trip_id", "gr_no", "truck_no", "destination", "booking_date", "source_file", "remark", "doc_type"])
+            if q and not all(term in blob.lower() for term in q.lower().split()):
+                continue
+            gr_no = item.get("gr_no", "")
+            truck_no = item.get("truck_no", "")
+            dest = item.get("destination", "")
+            date_val = item.get("booking_date", "")
+        add_result(item.get("doc_type", "Document"), tid, gr_no, truck_no, dest, date_val, item.get("url"), "Documents", item.get("source_file", ""))
+
+    # 2) Old POD links from Owner_Ledger.
+    owner_rows = get_owner_ledger_values_for_docs()
+    for tid, bk in booking_map.items():
+        if not _doc_search_match(bk, q):
+            continue
+        for i, link in enumerate(extract_pod_links_from_owner_rows(owner_rows, tid), start=1):
+            add_result("POD", tid, safe_cell(bk, 8, ""), safe_cell(bk, 6, ""), safe_cell(bk, 7, ""), safe_cell(bk, 0, ""), link, "Owner_Ledger old POD", f"Old POD {i}")
+
+    # 3) Old/new GR links saved in Bookings col Q/index 16.
+    for _, bk in bookings_df.iterrows():
+        if not _doc_search_match(bk, q):
+            continue
+        tid = safe_cell(bk, 14, "")
+        for i, link in enumerate(extract_links(safe_cell(bk, 16, "")), start=1):
+            add_result("GR / GRD", tid, safe_cell(bk, 8, ""), safe_cell(bk, 6, ""), safe_cell(bk, 7, ""), safe_cell(bk, 0, ""), link, "Bookings GR Link", f"GR Link {i}")
+
+    if not results:
+        st.info("कोई document link नहीं मिला।")
+        return
+
+    st.caption(f"{len(results)} document link(s) found")
+    for idx, item in enumerate(results[:100], start=1):
+        with st.container(border=True):
+            st.write(f"**{idx}. {item['doc_type']}** | GR: `{item['gr_no']}` | 🚛 `{item['truck_no']}` | 📍 `{item['destination']}` | 📅 `{item['booking_date']}` | ID: `{item['trip_id']}`")
+            if item.get("file_name"):
+                st.caption(f"File/Source: {item['file_name']} • {item['source']}")
+            else:
+                st.caption(item['source'])
+            st.link_button("📥 Open / Download", item["url"], use_container_width=True)
+    if len(results) > 100:
+        st.caption("पहले 100 results दिखाए गए हैं; search और narrow करें।")
+
+
 def show_documents_upload_page():
     st.markdown(
         """
@@ -297,6 +432,11 @@ def show_documents_upload_page():
     if df.empty:
         st.info("Bookings sheet में data नहीं मिला।")
         return
+
+    render_documents_download_search(df)
+
+    st.divider()
+    st.subheader("📤 New Document Upload")
 
     search = st.text_input(
         "🔍 Search",
@@ -415,3 +555,4 @@ def show_documents_upload_page():
             st.warning("Drive upload हो गया, लेकिन main sheet में link save नहीं हुआ। Documents log check करें।")
             for i, url in enumerate(urls[:10], start=1):
                 st.link_button(f"📥 Uploaded file {i} खोलें", url, type="secondary")
+

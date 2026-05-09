@@ -11,6 +11,7 @@ import json
 # ==========================================
 
 from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
 
 def get_all_trips():
     try:
@@ -84,13 +85,29 @@ def get_company_receivable_and_docs():
         bk_data = db.worksheet("Bookings").get_all_values()
         owner_data = db.worksheet("Owner_Ledger").get_all_values()
         
-        # सभी POD लिंक निकाल लें
+        # सभी POD लिंक निकाल लें — old Owner_Ledger + new Documents sheet formats
         pod_dict = {}
         if len(owner_data) > 1:
             for r in owner_data[1:]:
-                if len(r) > 4 and "POD Link:" in str(r[4]):
+                if len(r) > 1:
                     trip_id = str(r[1]).strip()
-                    pod_dict[trip_id] = str(r[4]).replace("POD Link:", "").strip()
+                    links = extract_pod_links_from_owner_rows([owner_data[0], r], trip_id)
+                    if links:
+                        pod_dict.setdefault(trip_id, [])
+                        for link in links:
+                            if link not in pod_dict[trip_id]:
+                                pod_dict[trip_id].append(link)
+        try:
+            doc_data = db.worksheet("Documents").get_all_values()
+            for item in extract_document_sheet_links(doc_data, None, "POD"):
+                trip_id = str(item.get("trip_id", "")).strip()
+                url = item.get("url")
+                if trip_id and url:
+                    pod_dict.setdefault(trip_id, [])
+                    if url not in pod_dict[trip_id]:
+                        pod_dict[trip_id].append(url)
+        except Exception:
+            pass
                 
         receivable_list = []
         if len(bk_data) > 1:
@@ -107,8 +124,10 @@ def get_company_receivable_and_docs():
                         except: pass
                     
                     # GR लिंक निकालना
-                    gr_link = str(r[16]).strip() if len(r) > 16 and "http" in str(r[16]) else None
-                    pod_link = pod_dict.get(trip_id, None)
+                    gr_links = extract_links(str(r[16]).strip()) if len(r) > 16 else []
+                    gr_link = gr_links[0] if gr_links else None
+                    pod_links = pod_dict.get(trip_id, [])
+                    pod_link = pod_links[0] if pod_links else None
                     
                     receivable_list.append({
                         "तारीख": str(r[0]),

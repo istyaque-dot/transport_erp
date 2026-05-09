@@ -8,6 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from doc_link_utils import extract_pod_links_from_owner_rows
 import io
 import json
 
@@ -125,7 +126,7 @@ def get_trip_summary(trip_id):
         df_owner_raw = get_owner_ledger_data()
         df_owner = pd.DataFrame(df_owner_raw[1:], columns=df_owner_raw[0])
         already_adj = 0
-        existing_pod_url = None
+        existing_pod_urls = []
 
         if not df_owner.empty and len(df_owner.columns) > 5:
             adj_rows = df_owner[df_owner.iloc[:, 1] == trip_id]
@@ -135,13 +136,13 @@ def get_trip_summary(trip_id):
                     try:
                         already_adj += int(float(str(r.iloc[5]).replace(',', '') or 0))
                     except: pass
-                elif "POD Link:" in desc:
-                    existing_pod_url = desc.replace("POD Link:", "").strip()
+        # Support old and new POD link formats: POD Link:, POD Link 1:, raw Drive IDs, and multi-links.
+        existing_pod_urls = extract_pod_links_from_owner_rows(df_owner_raw, trip_id)
 
-        return trip_bk, total_adv, already_adj, existing_pod_url
+        return trip_bk, total_adv, already_adj, existing_pod_urls
     except Exception as e:
         st.error(f"डेटा लोड एरर: {e}")
-        return None, 0, 0, None
+        return None, 0, 0, []
 
 # ==========================================
 # 📄 A4 PDF BUILDER
@@ -242,7 +243,7 @@ def show_pod_page():
     if df_owner.empty or df_owner.shape[1] < 6:
         st.info("Owner_Ledger में जरूरी columns नहीं मिले।")
         return
-    EXCLUDE = r"Shortage:|Extra/Detention:|Final Balance:|Final Pay:|POD Link:"
+    EXCLUDE = r"Shortage:|Extra/Detention:|Final Balance:|Final Pay:|POD\s*Link"
     df_pending = df_owner[~df_owner.iloc[:, 4].astype(str).str.contains(EXCLUDE, case=False, na=False)].iloc[::-1]
     if df_pending.empty:
         st.info("कोई पेंडिंग हिसाब नहीं मिला।")
@@ -286,7 +287,7 @@ def show_pod_page():
         parts = selected.split(" | ")
         gr_no = parts[0].replace("GR: ", "") if len(parts) > 0 else "N/A"
         truck_no = parts[1].replace("🚛 ", "") if len(parts) > 1 else "N/A"
-    trip_bk, total_adv, already_adj, existing_pod_url = get_trip_summary(trip_id)
+    trip_bk, total_adv, already_adj, existing_pod_urls = get_trip_summary(trip_id)
 
     if not trip_bk: st.error("❌ डेटा नहीं मिला।"); return
 
@@ -301,16 +302,17 @@ def show_pod_page():
     with c4:
         st.markdown(f"<div class='balance-card-due'>💰 बाकी देना<br>₹{current_bal:,}</div>" if current_bal > 0 else f"<div class='balance-card-clear'>✅ हिसाब क्लियर<br>₹{current_bal:,}</div>", unsafe_allow_html=True)
 
-    if existing_pod_url:
+    if existing_pod_urls:
         st.markdown("<span class='pod-badge'>📄 POD सेव है</span>", unsafe_allow_html=True)
-        st.link_button("📥 बिल्टी देखें", existing_pod_url, type="secondary")
+        for i, pod_url in enumerate(existing_pod_urls, start=1):
+            st.link_button(f"📥 POD / बिल्टी {i} देखें", pod_url, type="secondary")
 
     st.markdown("<hr>", unsafe_allow_html=True)
     db = connect_to_sheet()
 
     if current_bal <= 0:
         st.success("✅ हिसाब पूरा हो चुका है।")
-        if not existing_pod_url:
+        if not existing_pod_urls:
             with st.container():
                 st.markdown("#### 📄 बिल्टी (POD) अपलोड करें")
                 up_files = st.file_uploader("Upload", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"], accept_multiple_files=True, key="pod_only", label_visibility="collapsed")
