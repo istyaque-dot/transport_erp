@@ -39,6 +39,7 @@ REQUIRED_SHEETS = {
     "Shekh_Filling_Ledger": ["Date", "Trip ID", "Type", "Description", "Amount"],
     "canara_1747": ["Date", "Comment", "To/From", "Amount"],
     "Day_Book": ["Date", "Account", "Entry Type", "Category", "Amount", "Remarks"],
+    "Documents": ["Upload DateTime", "Doc Type", "Trip ID", "GR No", "Truck No", "Destination", "Booking Date", "Drive URL", "Files Count", "Source Files", "Remark"],
 }
 
 

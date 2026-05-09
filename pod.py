@@ -19,7 +19,53 @@ A4_W, A4_H = 1240, 1754
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell, trip_matches
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+
+# Local fallback helpers so POD page does not crash if GitHub has an older sheet_utils.py.
+# Search sequence: GR / Truck No / Destination / Date / Trip ID
+TRIP_SEARCH_INDEXES = [8, 6, 7, 0, 14]
+
+def safe_cell(row, idx, default=""):
+    try:
+        val = row.iloc[idx] if hasattr(row, "iloc") else row[idx]
+        if val is None:
+            return default
+        text = str(val).strip()
+        if text.lower() in ("", "nan", "none"):
+            return default
+        return text
+    except Exception:
+        return default
+
+def format_trip_label(row):
+    gr = safe_cell(row, 8, "N/A")
+    truck = safe_cell(row, 6, "N/A")
+    dest = safe_cell(row, 7, "N/A")
+    date = safe_cell(row, 0, "N/A")[:10]
+    trip_id = safe_cell(row, 14, "N/A")
+    return f"GR: {gr} | 🚛 {truck} | 📍 {dest} | 📅 {date} | ID: {trip_id}"
+
+def trip_search_blob(row):
+    return " ".join(safe_cell(row, i, "") for i in TRIP_SEARCH_INDEXES).lower()
+
+def trip_matches(row, query):
+    q = str(query or "").strip().lower()
+    if not q:
+        return True
+    terms = [t for t in q.replace("/", " ").replace("|", " ").split() if t]
+    blob = trip_search_blob(row)
+    return all(t in blob for t in terms)
+
+def filter_trip_dataframe(df, query):
+    if df is None or getattr(df, "empty", True):
+        return df
+    q = str(query or "").strip()
+    if not q:
+        return df
+    try:
+        return df[df.apply(lambda row: trip_matches(row, q), axis=1)].reset_index(drop=True)
+    except Exception:
+        return df
 
 # ==========================================
 # 📦 DATA FETCHERS
