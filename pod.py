@@ -7,7 +7,7 @@ import base64
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
-from crop_utils import get_processed_image, render_crop_tool
+from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
 import io
 import json
 
@@ -162,7 +162,7 @@ def image_to_a4(img: Image.Image) -> Image.Image:
 
 def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
     if len(image_files) == 1 and image_files[0].name.lower().endswith(".pdf"):
-        return image_files[0].read()
+        return get_processed_pdf_bytes(image_files[0], crop_map=crop_map, index=0)
     a4_pages = []
     for index, file in enumerate(image_files):
         if not file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")): continue

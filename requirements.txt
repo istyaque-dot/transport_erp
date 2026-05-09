@@ -10,3 +10,4 @@ Pillow
 supabase
 streamlit-cropper
 pillow-heif
+PyMuPDF

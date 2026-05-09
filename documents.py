@@ -9,7 +9,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from PIL import Image, ImageOps
-from crop_utils import get_processed_image, render_crop_tool
+from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
 
 from sheet_utils import (
     connect_to_sheet,
@@ -159,9 +159,9 @@ def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_
                 file_name = f"{base_name}_{idx}_{original_part}.jpg"
                 url = upload_to_drive(img_bytes, file_name, "image/jpeg")
             elif _is_pdf(uploaded_file):
-                uploaded_file.seek(0)
                 file_name = f"{base_name}_{idx}_{original_part}.pdf"
-                url = upload_to_drive(uploaded_file.read(), file_name, "application/pdf")
+                pdf_bytes = get_processed_pdf_bytes(uploaded_file, crop_map=crop_map, index=zero_index)
+                url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
             else:
                 continue
 

@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 import base64
 from PIL import Image
-from crop_utils import get_processed_image, render_crop_tool
+from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
 import io
 import json
 import gspread
@@ -44,7 +44,7 @@ def upload_to_drive(file_bytes, file_name):
 def prepare_pod_file(uploaded_files, crop_map=None):
     if not uploaded_files: return None, None
     if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
-        return uploaded_files[0].read(), "pdf"
+        return get_processed_pdf_bytes(uploaded_files[0], crop_map=crop_map, index=0), "pdf"
         
     A4_WIDTH = 2480
     A4_HEIGHT = 3508
