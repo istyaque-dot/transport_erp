@@ -10,17 +10,7 @@ import json
 # 🗄️ DATABASE 
 # ==========================================
 
-@st.cache_resource(ttl=3000)
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    return client.open("Khan_Transport_ERP")
+from sheet_utils import connect_to_sheet
 
 @st.cache_data(ttl=120)
 def get_all_trips():

@@ -3,10 +3,9 @@ pandas
 gspread
 oauth2client
 google-api-python-client
-xlsxwriter
 openpyxl
-streamlit-cropper
-supabase
-
+xlsxwriter
 requests
 Pillow
+supabase
+streamlit-cropper

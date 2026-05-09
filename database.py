@@ -9,19 +9,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import io
 
 # --- 0. CONNECTION ---
-@st.cache_resource(ttl=86400)
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    
-    client = gspread.authorize(creds)
-    sheet = client.open("Khan_Transport_ERP")
-    return sheet
+from sheet_utils import connect_to_sheet
 
 # --- 1. GOOGLE DRIVE UPLOAD ---
 def upload_to_drive(file_bytes, file_name, folder_id):

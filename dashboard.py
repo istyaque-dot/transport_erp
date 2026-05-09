@@ -8,67 +8,60 @@ import json
 # 🗄️ DATABASE QUERIES (Google Sheets)
 # ==========================================
 
-@st.cache_resource
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(
-        json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"]), scope)
-    return gspread.authorize(creds).open("Khan_Transport_ERP")
+from sheet_utils import connect_to_sheet
 
 @st.cache_data(ttl=60)
 def get_dashboard_data():
-    """गूगल शीट से सभी खातों का बैलेंस एक साथ निकालना"""
-    try:
-        db = connect_to_sheet()
-        
-        # 1. बैंक और नकद के नाम (Sheets Name)
-        banks_map = {
-            "Cash": "Cash_Ledger",
-            "Canara 311": "Canara_311_Ledger",
-            "Canara 41": "Canara_41_Ledger",
-            "BOB": "BOB_Ledger",
-            "Canara 1747": "canara_1747",
-            "Pump": "Shekh_Filling_Ledger"
-        }
-        
-        results = {}
-        for key, sheet_name in banks_map.items():
-            try:
-                # आखिरी कॉलम का टोटल निकालना[cite: 1]
-                df = pd.DataFrame(db.worksheet(sheet_name).get_all_values())
-                if len(df) > 1:
-                    last_col = df.iloc[1:, -1].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
-                    results[key] = int(pd.to_numeric(last_col, errors='coerce').fillna(0).sum())
-                else: results[key] = 0
-            except: results[key] = 0
+    """Google Sheets से dashboard numbers index-safe तरीके से निकालना."""
+    from sheet_utils import worksheet_values, clean_amount
 
-        # 2. इश्तियाक और यूनिवर्सल लेजर
-        ish_df = pd.DataFrame(db.worksheet("Ishtyaque_Ledger").get_all_values())
-        ish_bal = int(pd.to_numeric(ish_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').fillna(0).sum()) if len(ish_df)>1 else 0
-        
-        uni_df = pd.DataFrame(db.worksheet("Universal_Ledger").get_all_values())
-        uni_bal = int(pd.to_numeric(uni_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').fillna(0).sum()) if len(uni_df)>1 else 0
+    banks_map = {
+        "Cash": "Cash_Ledger",
+        "Canara 311": "Canara_311_Ledger",
+        "Canara 41": "Canara_41_Ledger",
+        "BOB": "BOB_Ledger",
+        "Canara 1747": "canara_1747",
+        "Pump": "Shekh_Filling_Ledger",
+    }
 
-        # 3. गाड़ी वालों को देय (Payable) - Bookings vs Advances
-        bk_df = pd.DataFrame(db.worksheet("Bookings").get_all_values())
-        if len(bk_df) > 1:
-            bk_df.columns = bk_df.iloc[0]
-            bk_df = bk_df[1:]
-            total_fr = pd.to_numeric(bk_df['total fright'].str.replace(',', ''), errors='coerce').sum() #[cite: 1]
-        else: total_fr = 0
+    results = {}
+    for key, sheet_name in banks_map.items():
+        rows = worksheet_values(sheet_name)
+        total = 0
+        for row in rows[1:]:
+            if row:
+                total += clean_amount(row[-1])
+        results[key] = int(total)
 
-        adv_df = pd.DataFrame(db.worksheet("Advances").get_all_values())
-        total_adv = pd.to_numeric(adv_df.iloc[1:, -1].str.replace(',', ''), errors='coerce').sum() if len(adv_df)>1 else 0
+    def ledger_balance(sheet_name):
+        rows = worksheet_values(sheet_name)
+        return int(sum(clean_amount(row[-1]) for row in rows[1:] if row))
 
-        return results, ish_bal, uni_bal, (total_fr - total_adv)
+    ish_bal = ledger_balance("Ishtyaque_Ledger")
+    uni_bal = ledger_balance("Universal_Ledger")
 
-    except Exception as e:
-        st.error(f"Data Error: {e}")
-        return {}, 0, 0, 0
+    # गाड़ी वालों को देय = Owner Freight total - Advances total - final/shortage adjustments
+    booking_rows = worksheet_values("Bookings")
+    total_owner_freight = 0
+    for row in booking_rows[1:]:
+        # current Booking schema में Owner Freight index 12 है
+        if len(row) > 12:
+            total_owner_freight += clean_amount(row[12])
+
+    adv_rows = worksheet_values("Advances")
+    total_adv = 0
+    for row in adv_rows[1:]:
+        # New schema index 8, old fallback index 5
+        total_adv += clean_amount(row[8] if len(row) > 8 else (row[5] if len(row) > 5 else 0))
+
+    owner_rows = worksheet_values("Owner_Ledger")
+    owner_adjustments = 0
+    for row in owner_rows[1:]:
+        if len(row) > 5 and any(k in str(row[4]) for k in ["Final Balance", "Shortage", "Extra", "Detention"]):
+            owner_adjustments += clean_amount(row[5])
+
+    payable = total_owner_freight - total_adv + owner_adjustments
+    return results, ish_bal, uni_bal, int(payable)
 
 # ==========================================
 # 🎨 CSS

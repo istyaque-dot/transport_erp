@@ -187,18 +187,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
 # इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
 # ==========================================
-@st.cache_resource(ttl=3000)
-def connect_to_sheet_booking():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    raw = st.secrets["gcp_service_account"]
-    creds_dict = json.loads(raw) if isinstance(raw, str) else dict(raw)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    return client.open("Khan_Transport_ERP")
+from sheet_utils import connect_to_sheet as connect_to_sheet_booking
 
 def save_booking_to_db(row_data):
     try:

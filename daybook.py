@@ -10,20 +10,7 @@ import json
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-@st.cache_resource(ttl=86400)
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    # Streamlit secrets से सीधा डिक्शनरी उठाना
-    creds_dict = json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    
-    client = gspread.authorize(creds)
-    sheet = client.open("Khan_Transport_ERP")
-    return sheet
+from sheet_utils import connect_to_sheet
 
 def save_daybook_to_db(row_data):
     try:
