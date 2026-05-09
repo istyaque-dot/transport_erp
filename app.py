@@ -71,7 +71,9 @@ def safe_open_page(import_path, function_name):
 
 
 def go_to_page(page_name):
-    st.session_state["page_choice"] = page_name
+    # Do not modify the sidebar radio key after the radio widget is created.
+    # Store the requested page in a temporary key and apply it before rendering the radio on rerun.
+    st.session_state["pending_page_choice"] = page_name
 
 
 def show_home_page():
@@ -144,6 +146,11 @@ if check_password():
 
     if "page_choice" not in st.session_state or st.session_state["page_choice"] not in PAGES:
         st.session_state["page_choice"] = "🏠 Home"
+
+    pending_page = st.session_state.pop("pending_page_choice", None)
+    if pending_page in PAGES:
+        st.session_state["page_choice"] = pending_page
+
     choice = st.sidebar.radio("नेविगेशन", list(PAGES.keys()), key="page_choice")
     target, func = PAGES[choice]
     if callable(target):
