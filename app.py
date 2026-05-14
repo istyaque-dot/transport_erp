@@ -1,7 +1,9 @@
 import datetime
 import streamlit as st
+from action_guard import install_action_guard, clear_click_locks
 
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
+install_action_guard()
 
 st.markdown("""
 <style>
@@ -126,6 +128,13 @@ if check_password():
     if st.sidebar.button("🚪 Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
+
+    with st.sidebar.expander("⚙️ Safety", expanded=False):
+        st.caption("Double-click protection active")
+        if st.button("🔓 Unlock Buttons", key="unlock_click_locks"):
+            clear_click_locks()
+            st.success("Buttons unlocked")
+            st.rerun()
 
     PAGES = {
         "🏠 Home": (show_home_page, None),

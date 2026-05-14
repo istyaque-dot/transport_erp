@@ -1,4 +1,5 @@
 import streamlit as st
+from action_guard import guarded_container_button
 import datetime
 import time
 import pandas as pd
@@ -257,7 +258,7 @@ def show_receivable_page():
                         d = st.session_state.rec_temp_data
                         st.warning(f"❓ क्या आप ₹{int(d['amt']):,} का पेमेंट **{d['bank']}** में सेव करना चाहते हैं?")
                         ca1, ca2 = st.columns([1, 4])
-                        if ca1.button("👍 हाँ", type="primary"):
+                        if guarded_container_button(ca1, "👍 हाँ", type="primary", key="receivable_confirm_save_guard"):
                             with st.spinner("सेव हो रहा है..."):
                                 row = [str(d['date']), d['tid'], d['truck'], d['comp'], int(d['amt']), d['bank'], 0, d['rem']]
                                 if save_receivable_to_db(row):

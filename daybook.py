@@ -1,4 +1,5 @@
 import streamlit as st
+from action_guard import guarded_container_button
 import datetime
 import time
 import pandas as pd
@@ -111,7 +112,7 @@ def show_daybook_page():
         st.warning(f"❓ क्या आप पक्का ₹{int(amount):,} ({entry_type}) की एंट्री सेव करना चाहते हैं?")
         
         c1, c2 = st.columns([1, 4])
-        if c1.button("👍 हाँ, सेव करें", key=f"yes_db_{c}"):
+        if guarded_container_button(c1, "👍 हाँ, सेव करें", key=f"yes_db_{c}"):
             if st.session_state.last_db_c == c:
                 st.toast("⏳ प्रोसेस हो रहा है...")
             else:

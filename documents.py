@@ -10,6 +10,7 @@ import requests
 import streamlit as st
 from PIL import Image, ImageOps
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from a4_pdf_utils import build_single_upload_as_a4_pdf
 from doc_link_utils import extract_links, extract_pod_links_from_owner_rows, extract_document_sheet_links
 
 from sheet_utils import (
@@ -245,10 +246,10 @@ def upload_to_drive(file_bytes: bytes, file_name: str, mime_type: str) -> str | 
 
 def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_id: str, crop_map=None) -> Tuple[List[str], str]:
     """
-    Separate-file mode:
-    - हर JPG/PNG photo अलग JPEG file बनकर Google Drive में upload होगी.
-    - हर PDF अलग PDF file के रूप में upload होगी.
-    - कोई multiple photo एक PDF/file में merge नहीं होगी.
+    Separate-file + print-ready mode:
+    - हर uploaded JPG/PNG/HEIC/PDF अलग PDF बनेगी.
+    - हर PDF A4 full-page normalize होगी ताकि print में GR/POD छोटा न आए.
+    - कोई multiple file merge नहीं होगी.
     Returns: (urls, source_names)
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -256,32 +257,30 @@ def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_
     urls: List[str] = []
     source_names = ", ".join([f.name for f in files])
 
-    total = len(files)
     for zero_index, uploaded_file in enumerate(files):
         i = zero_index + 1
         idx = f"{i:02d}"
         original_part = _clean_file_part(uploaded_file.name.rsplit('.', 1)[0])
         try:
-            if _is_image(uploaded_file):
-                img_bytes = image_to_jpeg_bytes(uploaded_file, crop_map=crop_map, file_index=zero_index)
-                if not img_bytes:
-                    continue
-                file_name = f"{base_name}_{idx}_{original_part}.jpg"
-                url = upload_to_drive(img_bytes, file_name, "image/jpeg")
-            elif _is_pdf(uploaded_file):
-                file_name = f"{base_name}_{idx}_{original_part}.pdf"
-                pdf_bytes = get_processed_pdf_bytes(uploaded_file, crop_map=crop_map, index=zero_index)
-                url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
-            else:
+            if not (_is_image(uploaded_file) or _is_pdf(uploaded_file)):
                 continue
-
+            pdf_bytes = build_single_upload_as_a4_pdf(
+                uploaded_file,
+                crop_map=crop_map or {},
+                index=zero_index,
+                get_processed_image_func=get_processed_image,
+                get_processed_pdf_func=get_processed_pdf_bytes,
+            )
+            if not pdf_bytes:
+                continue
+            file_name = f"{base_name}_{idx}_{original_part}.pdf"
+            url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
             if url:
                 urls.append(url)
         except Exception:
             continue
 
     return urls, source_names
-
 
 def get_bookings_df() -> pd.DataFrame:
     try:
@@ -549,7 +548,7 @@ def show_documents_upload_page():
         unsafe_allow_html=True,
     )
     st.header("📤 POD / GR-GRD Easy Upload")
-    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग files के रूप में Drive पर save होंगे।")
+    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग full-page A4 PDFs के रूप में Drive पर save होंगे।")
 
     df = get_bookings_df()
     if df.empty:
@@ -641,7 +640,7 @@ def show_documents_upload_page():
         with st.expander("Selected files देखें"):
             for f in files:
                 st.write(f"• {f.name}")
-        st.info("हर JPG/PNG photo अलग image file बनेगी। हर PDF अलग PDF file के रूप में upload होगी।")
+        st.info("हर JPG/PNG/PDF अलग full-page A4 PDF बनेगी। Multiple files merge नहीं होंगी।")
         docs_crop_map = render_crop_tool(
             files,
             key_prefix=f"docs_crop_{trip_id}_{doc_type}",

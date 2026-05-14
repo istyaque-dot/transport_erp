@@ -8,6 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from a4_pdf_utils import build_a4_full_pdf_from_uploads
 from doc_link_utils import extract_pod_links_from_owner_rows
 import io
 import json
@@ -149,30 +150,21 @@ def get_trip_summary(trip_id):
 # ==========================================
 
 def image_to_a4(img: Image.Image) -> Image.Image:
-    """फोटो को बिना स्ट्रेच किए A4 कैनवास पर फिट करना"""
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    img_w, img_h = img.size
-    canvas_w, canvas_h = (A4_H, A4_W) if img_w > img_h else (A4_W, A4_H)
-    scale = min(canvas_w / img_w, canvas_h / img_h)
-    new_w, new_h = int(img_w * scale), int(img_h * scale)
-    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
-    canvas = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
-    canvas.paste(img_resized, ((canvas_w - new_w) // 2, (canvas_h - new_h) // 2))
-    return canvas
+    # Legacy wrapper retained for compatibility; actual upload uses build_a4_pdf below.
+    from a4_pdf_utils import image_to_a4_full_page
+    return image_to_a4_full_page(img)
 
 def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
-    if len(image_files) == 1 and image_files[0].name.lower().endswith(".pdf"):
-        return get_processed_pdf_bytes(image_files[0], crop_map=crop_map, index=0)
-    a4_pages = []
-    for index, file in enumerate(image_files):
-        if not file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")): continue
-        img = get_processed_image(file, crop_map, index)
-        a4_pages.append(image_to_a4(img))
-    if not a4_pages: return None
-    pdf_bytes = io.BytesIO()
-    a4_pages[0].save(pdf_bytes, format="PDF", resolution=150, save_all=True, append_images=a4_pages[1:]) if len(a4_pages) > 1 else a4_pages[0].save(pdf_bytes, format="PDF", resolution=150)
-    return pdf_bytes.getvalue()
+    """Build full-page A4 PDF for POD/GR files.
+
+    Also fixes old PDFs where the document image is pasted small in the center.
+    """
+    return build_a4_full_pdf_from_uploads(
+        list(image_files or []),
+        crop_map=crop_map or {},
+        get_processed_image_func=get_processed_image,
+        get_processed_pdf_func=get_processed_pdf_bytes,
+    )
 
 # ==========================================
 # 📤 DRIVE & LEDGER FUNCTIONS

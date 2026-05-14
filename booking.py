@@ -1,4 +1,5 @@
 import streamlit as st
+from action_guard import guarded_container_button
 import datetime
 import time
 import pandas as pd
@@ -6,6 +7,7 @@ import requests
 import base64
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from a4_pdf_utils import build_a4_full_pdf_from_uploads
 import io
 import json
 import gspread
@@ -42,39 +44,20 @@ def upload_to_drive(file_bytes, file_name):
 
 # 🟢 A4 SIZE PDF LOGIC
 def prepare_pod_file(uploaded_files, crop_map=None):
-    if not uploaded_files: return None, None
-    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
-        return get_processed_pdf_bytes(uploaded_files[0], crop_map=crop_map, index=0), "pdf"
-        
-    A4_WIDTH = 2480
-    A4_HEIGHT = 3508
-    
-    a4_images = []
-    for index, file in enumerate(uploaded_files):
-        if file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")):
-            img = get_processed_image(file, crop_map, index)
-            
-            try:
-                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
-            except AttributeError:
-                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
-            
-            a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-            
-            x_offset = (A4_WIDTH - img.width) // 2
-            y_offset = (A4_HEIGHT - img.height) // 2
-            a4_canvas.paste(img, (x_offset, y_offset))
-            
-            a4_images.append(a4_canvas)
-            
-    if a4_images:
-        pdf_bytes = io.BytesIO()
-        if len(a4_images) == 1: 
-            a4_images[0].save(pdf_bytes, format="PDF", resolution=300)
-        else: 
-            a4_images[0].save(pdf_bytes, format="PDF", resolution=300, save_all=True, append_images=a4_images[1:])
-        return pdf_bytes.getvalue(), "pdf"
-    return None, None
+    """Return full-page A4 PDF bytes for GR/POD uploads.
+
+    Photos and already-created PDFs are normalized so the document fills the A4 page
+    instead of staying small in the center.
+    """
+    if not uploaded_files:
+        return None, None
+    final_pdf = build_a4_full_pdf_from_uploads(
+        list(uploaded_files),
+        crop_map=crop_map or {},
+        get_processed_image_func=get_processed_image,
+        get_processed_pdf_func=get_processed_pdf_bytes,
+    )
+    return (final_pdf, "pdf") if final_pdf else (None, None)
 
 def save_gr_link_to_db(trip_id, gr_url):
     try:
@@ -555,7 +538,7 @@ def show_booking_page():
             """, unsafe_allow_html=True)
 
             cb1, cb2 = st.columns([1, 4])
-            if cb1.button("👍 हाँ, सेव करें", type="primary"):
+            if guarded_container_button(cb1, "👍 हाँ, सेव करें", type="primary", key="booking_confirm_save_guard"):
                 if st.session_state.bk_saving_lock:
                     st.toast("⏳ प्रोसेस हो रहा है...")
                 else:
