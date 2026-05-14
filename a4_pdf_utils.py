@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 from typing import Any, Iterable
 
-from PIL import Image, ImageChops, ImageOps
+from PIL import Image, ImageChops, ImageOps, ImageEnhance, ImageFilter
 
 try:
     import fitz  # PyMuPDF
@@ -63,6 +63,24 @@ def _to_rgb(img: Image.Image) -> Image.Image:
     return img
 
 
+
+def enhance_document_image(img: Image.Image) -> Image.Image:
+    """Light auto-clean for POD/GR photos.
+
+    Mobile flash should still be used while taking the photo. This function only
+    improves brightness/contrast/sharpness a little after upload; it does not
+    over-process stamps/signatures.
+    """
+    img = _to_rgb(img)
+    try:
+        img = ImageEnhance.Brightness(img).enhance(1.05)
+        img = ImageEnhance.Contrast(img).enhance(1.18)
+        img = ImageEnhance.Sharpness(img).enhance(1.25)
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=110, threshold=3))
+    except Exception:
+        pass
+    return img
+
 def auto_crop_white_border(img: Image.Image, threshold: int = 245, padding: int = 20) -> Image.Image:
     """Remove large white margins around document image.
 
@@ -92,7 +110,7 @@ def auto_crop_white_border(img: Image.Image, threshold: int = 245, padding: int 
 def image_to_a4_full_page(img: Image.Image, margin_px: int = 20) -> Image.Image:
     """Place the image on A4 as large as possible without stretch/cut."""
     img = auto_crop_white_border(img)
-    img = _to_rgb(img)
+    img = enhance_document_image(img)
     iw, ih = img.size
     page_w, page_h = A4_LANDSCAPE if iw > ih else A4_PORTRAIT
     usable_w = page_w - 2 * margin_px

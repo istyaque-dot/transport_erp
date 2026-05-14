@@ -116,8 +116,8 @@ def show_home_page():
         if st.button("📝 New Booking", use_container_width=True):
             go_to_page("📝 Booking")
             st.rerun()
-        if st.button("📤 POD / GR Upload", use_container_width=True):
-            go_to_page("📤 Docs Upload")
+        if st.button("📸 Quick POD Upload", use_container_width=True):
+            go_to_page("📸 Quick POD Upload")
             st.rerun()
     with q2:
         if st.button("💸 Advance Entry", use_container_width=True):
@@ -164,6 +164,7 @@ if check_password():
         "📝 Booking": ("booking", "show_booking_page"),
         "💸 Advance": ("advance", "show_advance_page"),
         "🏁 POD": ("pod", "show_pod_page"),
+        "📸 Quick POD Upload": ("quick_pod_upload", "show_quick_pod_upload_page"),
         "📤 Docs Upload": ("documents", "show_documents_upload_page"),
         "📥 Receivable": ("receivable", "show_receivable_page"),
         "💸 Outstanding": ("outstanding", "show_outstanding_page"),

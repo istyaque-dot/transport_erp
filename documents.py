@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 from PIL import Image, ImageOps
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
-from a4_pdf_utils import build_single_upload_as_a4_pdf
+from a4_pdf_utils import build_single_upload_as_a4_pdf, build_a4_full_pdf_from_uploads
 from doc_link_utils import extract_links, extract_pod_links_from_owner_rows, extract_document_sheet_links
 
 from sheet_utils import (
@@ -281,6 +281,32 @@ def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_
 
     return urls, source_names
 
+
+def upload_pod_combined_pdf(files, gr_no: str, truck_no: str, trip_id: str, crop_map=None) -> Tuple[List[str], str]:
+    """Create one multi-page A4 PDF for all selected POD files and upload once.
+
+    This replaces the old POD behavior where multiple POD photos created multiple Drive links.
+    GR/GRD upload still uses separate files.
+    """
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = f"POD_GR_{_clean_file_part(gr_no)}_{_clean_file_part(truck_no)}_{_clean_file_part(trip_id)}_{timestamp}.pdf"
+    source_names = ", ".join([f.name for f in files])
+    try:
+        pdf_bytes = build_a4_full_pdf_from_uploads(
+            list(files or []),
+            crop_map=crop_map or {},
+            get_processed_image_func=get_processed_image,
+            get_processed_pdf_func=get_processed_pdf_bytes,
+        )
+        if not pdf_bytes:
+            return [], source_names
+        url = upload_to_drive(pdf_bytes, base_name, "application/pdf")
+        return ([url] if url else []), source_names
+    except Exception as exc:
+        st.error(f"POD combined PDF process error: {exc}")
+        return [], source_names
+
+
 def get_bookings_df() -> pd.DataFrame:
     try:
         values = connect_to_sheet().worksheet("Bookings").get_all_values()
@@ -547,7 +573,7 @@ def show_documents_upload_page():
         unsafe_allow_html=True,
     )
     st.header("📤 POD / GR-GRD Easy Upload")
-    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग files के रूप में Drive पर save होंगे।")
+    st.caption("Google Sheets + Google Drive mode. POD में multiple photos/PDF एक combined A4 PDF बनेंगे; GR/GRD अलग-अलग files रहेंगे।")
 
     df = get_bookings_df()
     if df.empty:
@@ -639,7 +665,11 @@ def show_documents_upload_page():
         with st.expander("Selected files देखें"):
             for f in files:
                 st.write(f"• {f.name}")
-        st.info("हर JPG/PNG photo अलग image file बनेगी। हर PDF अलग PDF file के रूप में upload होगी।")
+        
+        if doc_type == "POD":
+            st.info("POD mode: selected सभी photos/PDF एक single multi-page A4 PDF बनेंगे। Mobile camera में Flash ON रखें।")
+        else:
+            st.info("GR/GRD mode: हर selected file अलग print-ready A4 PDF के रूप में upload होगी।")
         docs_crop_map = render_crop_tool(
             files,
             key_prefix=f"docs_crop_{trip_id}_{doc_type}",
@@ -659,9 +689,11 @@ def show_documents_upload_page():
             st.error("Trip ID missing है।")
             return
 
-        doc_code = "GRD" if doc_type == "GR / GRD" else "POD"
         with st.spinner("Files process होकर Google Drive पर upload हो रही हैं..."):
-            urls, source_names = upload_document_files(files, doc_code, gr_no, truck_no, trip_id, crop_map=docs_crop_map)
+            if doc_type == "POD":
+                urls, source_names = upload_pod_combined_pdf(files, gr_no, truck_no, trip_id, crop_map=docs_crop_map)
+            else:
+                urls, source_names = upload_document_files(files, "GRD", gr_no, truck_no, trip_id, crop_map=docs_crop_map)
 
         if not urls:
             st.error("Drive upload fail हुआ। Google Apps Script URL / Drive permission check करें।")
@@ -688,7 +720,11 @@ def show_documents_upload_page():
         )
 
         if ok:
-            st.success(f"✅ Upload complete. {len(urls)} separate file link(s) Google Sheet में save हो गए।")
+            
+            if doc_type == "POD":
+                st.success(f"✅ POD combined PDF save हो गई। {len(files)} file(s) = 1 PDF link Google Sheet में save हुआ।")
+            else:
+                st.success(f"✅ Upload complete. {len(urls)} separate file link(s) Google Sheet में save हो गए।")
             for i, url in enumerate(urls[:10], start=1):
                 st.link_button(f"📥 Uploaded file {i} खोलें", url, type="secondary")
             if len(urls) > 10:
