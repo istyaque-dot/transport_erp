@@ -1,15 +1,40 @@
-"""Safe no-block action guard.
+"""No-block action guard + old monkey-patch uninstaller.
 
-Older app versions used this module to monkey-patch Streamlit buttons. That caused
-"Processing... duplicate click blocked" and uploads could get stuck.
-This version intentionally does NOT monkey-patch buttons.
+This module intentionally does NOT monkey-patch Streamlit buttons.
+It also restores st.button/st.form_submit_button if an older app session had installed
+the previous global duplicate-click guard.
 """
+from __future__ import annotations
+
 import streamlit as st
 
-def install_action_guard():
+_INSTALLED = False
+_ORIGINAL_BUTTON = None
+_ORIGINAL_FORM_SUBMIT_BUTTON = None
+
+def uninstall_action_guard() -> None:
+    global _INSTALLED
+    # In older versions these globals existed in the already-loaded module.
+    orig_btn = globals().get("_ORIGINAL_BUTTON")
+    orig_form = globals().get("_ORIGINAL_FORM_SUBMIT_BUTTON")
+    try:
+        if orig_btn is not None:
+            st.button = orig_btn
+        if orig_form is not None:
+            st.form_submit_button = orig_form
+    except Exception:
+        pass
+    _INSTALLED = False
+
+def install_action_guard() -> None:
+    uninstall_action_guard()
     return None
 
-def clear_click_locks():
+def clear_click_locks() -> None:
     for key in list(st.session_state.keys()):
-        if str(key).startswith("_guard_") or "saving_lock" in str(key).lower() or "upload_lock" in str(key).lower():
-            del st.session_state[key]
+        k = str(key).lower()
+        if str(key).startswith("_guard_") or "saving_lock" in k or "upload_lock" in k or "button_lock" in k:
+            try:
+                del st.session_state[key]
+            except Exception:
+                pass

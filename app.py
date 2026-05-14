@@ -1,5 +1,30 @@
 import datetime
+import sys
 import streamlit as st
+
+# FORCE UNINSTALL old global button guard if Streamlit process reused old module.
+# Old action_guard monkey-patched st.button and caused: "Processing... duplicate click blocked".
+_old_guard = sys.modules.get("action_guard")
+if _old_guard is not None:
+    try:
+        _orig_btn = getattr(_old_guard, "_ORIGINAL_BUTTON", None)
+        _orig_form = getattr(_old_guard, "_ORIGINAL_FORM_SUBMIT_BUTTON", None)
+        if _orig_btn is not None:
+            st.button = _orig_btn
+        if _orig_form is not None:
+            st.form_submit_button = _orig_form
+        setattr(_old_guard, "_INSTALLED", False)
+    except Exception:
+        pass
+
+# Clear old lock keys on every run so upload/save buttons do not remain stuck.
+for _k in list(st.session_state.keys()):
+    _lk = str(_k).lower()
+    if str(_k).startswith("_guard_") or "saving_lock" in _lk or "upload_lock" in _lk or "button_lock" in _lk:
+        try:
+            del st.session_state[_k]
+        except Exception:
+            pass
 
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
