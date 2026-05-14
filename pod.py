@@ -150,15 +150,20 @@ def get_trip_summary(trip_id):
 # ==========================================
 
 def image_to_a4(img: Image.Image) -> Image.Image:
-    # Legacy wrapper retained for compatibility; actual upload uses build_a4_pdf below.
-    from a4_pdf_utils import image_to_a4_full_page
-    return image_to_a4_full_page(img)
+    """फोटो को बिना स्ट्रेच किए A4 कैनवास पर फिट करना"""
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    img_w, img_h = img.size
+    canvas_w, canvas_h = (A4_H, A4_W) if img_w > img_h else (A4_W, A4_H)
+    scale = min(canvas_w / img_w, canvas_h / img_h)
+    new_w, new_h = int(img_w * scale), int(img_h * scale)
+    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
+    canvas.paste(img_resized, ((canvas_w - new_w) // 2, (canvas_h - new_h) // 2))
+    return canvas
 
 def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
-    """Build full-page A4 PDF for POD/GR files.
-
-    Also fixes old PDFs where the document image is pasted small in the center.
-    """
+    """Build print-ready A4 full-page PDF from POD/GR uploads."""
     return build_a4_full_pdf_from_uploads(
         list(image_files or []),
         crop_map=crop_map or {},
@@ -181,18 +186,29 @@ def upload_to_drive(file_bytes, file_name):
     except: return None
 
 def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files, crop_map=None):
-    with st.spinner("📄 A4 PDF बन रही है और अपलोड हो रही है..."):
+    status = st.status("⏳ POD upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
+    try:
+        status.write("1/3: A4 full-page PDF बन रही है...")
         final_bytes = build_a4_pdf(up_files, crop_map=crop_map)
-        if final_bytes:
-            f_name = f"POD_{gr_no}_{truck_no}.pdf"
-            d_id = upload_to_drive(final_bytes, f_name)
-            if d_id:
-                pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
-                db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
-                invalidate_sheet_cache()
-                st.success("✅ POD सुरक्षित हो गई!")
-                time.sleep(1.5); st.rerun()
-            else: st.error("❌ Drive अपलोड फेल!")
+        if not final_bytes:
+            status.update(label="❌ POD file process नहीं हुई।", state="error")
+            return
+        status.write("2/3: Google Drive पर upload हो रहा है...")
+        f_name = f"POD_{gr_no}_{truck_no}.pdf"
+        d_id = upload_to_drive(final_bytes, f_name)
+        if not d_id:
+            status.update(label="❌ Drive upload fail हुआ।", state="error")
+            return
+        status.write("3/3: Owner_Ledger में link save हो रहा है...")
+        pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
+        db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+        invalidate_sheet_cache()
+        status.update(label="✅ POD A4 full-page PDF save हो गई।", state="complete")
+        st.success("✅ POD सुरक्षित हो गई!")
+        time.sleep(1.0)
+        st.rerun()
+    except Exception as exc:
+        status.update(label=f"❌ POD upload error: {exc}", state="error")
 
 def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank_name, remark):
     try:

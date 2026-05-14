@@ -1,5 +1,4 @@
 import streamlit as st
-from action_guard import guarded_container_button
 import datetime
 import time
 import pandas as pd
@@ -138,7 +137,7 @@ def show_transfer_page():
         d = st.session_state.tf_temp_data
         st.warning(f"❓ क्या आप पक्का ₹{d['t_amt']:,} को **{d['from_acc']}** से **{d['to_acc']}** में ट्रांसफर करना चाहते हैं?")
         c1, c2 = st.columns([1, 4])
-        if guarded_container_button(c1, "👍 हाँ", type="primary", key="transfer_confirm_save_guard"):
+        if c1.button("👍 हाँ", type="primary"):
             with st.spinner("⏳ प्रोसेस हो रहा है..."):
                 if save_transfer_ledgers(d['t_date'], d['from_acc'], d['to_acc'], d['t_amt'], d['t_remarks']):
                     st.success("✅ सफलतापूर्वक ट्रांसफर हो गया!"); time.sleep(1.5)

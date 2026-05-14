@@ -245,12 +245,11 @@ def upload_to_drive(file_bytes: bytes, file_name: str, mime_type: str) -> str | 
 
 
 def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_id: str, crop_map=None) -> Tuple[List[str], str]:
-    """
-    Separate-file + print-ready mode:
-    - हर uploaded JPG/PNG/HEIC/PDF अलग PDF बनेगी.
-    - हर PDF A4 full-page normalize होगी ताकि print में GR/POD छोटा न आए.
-    - कोई multiple file merge नहीं होगी.
-    Returns: (urls, source_names)
+    """Upload every selected file separately as a print-ready A4 PDF.
+
+    - Multiple files merge नहीं होंगी.
+    - हर JPG/PNG/HEIC/PDF अलग PDF बनेगी.
+    - GR/POD page पर छोटा paste होने की problem fix: white border auto-crop + full A4 fit.
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{doc_code}_{_clean_file_part(gr_no)}_{_clean_file_part(truck_no)}_{_clean_file_part(trip_id)}_{timestamp}"
@@ -258,8 +257,7 @@ def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_
     source_names = ", ".join([f.name for f in files])
 
     for zero_index, uploaded_file in enumerate(files):
-        i = zero_index + 1
-        idx = f"{i:02d}"
+        idx = f"{zero_index + 1:02d}"
         original_part = _clean_file_part(uploaded_file.name.rsplit('.', 1)[0])
         try:
             if not (_is_image(uploaded_file) or _is_pdf(uploaded_file)):
@@ -277,7 +275,8 @@ def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_
             url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
             if url:
                 urls.append(url)
-        except Exception:
+        except Exception as exc:
+            st.warning(f"{uploaded_file.name} process नहीं हुई: {exc}")
             continue
 
     return urls, source_names
@@ -548,7 +547,7 @@ def show_documents_upload_page():
         unsafe_allow_html=True,
     )
     st.header("📤 POD / GR-GRD Easy Upload")
-    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग full-page A4 PDFs के रूप में Drive पर save होंगे।")
+    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग files के रूप में Drive पर save होंगे।")
 
     df = get_bookings_df()
     if df.empty:
@@ -640,7 +639,7 @@ def show_documents_upload_page():
         with st.expander("Selected files देखें"):
             for f in files:
                 st.write(f"• {f.name}")
-        st.info("हर JPG/PNG/PDF अलग full-page A4 PDF बनेगी। Multiple files merge नहीं होंगी।")
+        st.info("हर JPG/PNG photo अलग image file बनेगी। हर PDF अलग PDF file के रूप में upload होगी।")
         docs_crop_map = render_crop_tool(
             files,
             key_prefix=f"docs_crop_{trip_id}_{doc_type}",
