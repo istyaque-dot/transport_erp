@@ -2,6 +2,22 @@ import datetime
 import sys
 import streamlit as st
 
+from auth_utils import (
+    restore_login_from_cookie,
+    login_user,
+    logout_user,
+)
+
+try:
+    from sheet_utils import invalidate_sheet_cache
+except Exception:
+    def invalidate_sheet_cache():
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+
+
 # FORCE UNINSTALL old global button guard if Streamlit process reused old module.
 # Old action_guard monkey-patched st.button and caused: "Processing... duplicate click blocked".
 _old_guard = sys.modules.get("action_guard")
@@ -64,7 +80,12 @@ st.markdown("""
 
 
 def check_password():
+    # 1) Normal Streamlit session login
     if st.session_state.get("password_correct", False):
+        return True
+
+    # 2) Hard refresh / tab reopen: restore login from browser cookie
+    if restore_login_from_cookie():
         return True
 
     st.markdown(
@@ -77,9 +98,10 @@ def check_password():
         with st.form("login_form_new"):
             u = st.text_input("👤 Username")
             p = st.text_input("🔑 Password", type="password")
+            remember = st.checkbox("इस browser में login याद रखें", value=True)
             if st.form_submit_button("🚀 Login करें", use_container_width=True):
                 if u == "admin" and p == "khan786":
-                    st.session_state["password_correct"] = True
+                    login_user(u, remember=remember, days=30)
                     st.rerun()
                 else:
                     st.error("❌ गलत यूजरनाम या पासवर्ड")
@@ -149,13 +171,44 @@ def show_home_page():
 if check_password():
     st.sidebar.title("🚛 ERP Menu")
     if st.sidebar.button("🚪 Logout"):
-        st.session_state["password_correct"] = False
+        logout_user()
         st.rerun()
 
-    with st.sidebar.expander("⚙️ Safety", expanded=False):
+    with st.sidebar.expander("🔄 Refresh / Safety", expanded=False):
+        st.caption("Hard browser refresh की जगह यह button use करें. Login बना रहेगा और fresh data reload होगा.")
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            # Keep login/page intact; clear only cached sheet/page data.
+            keep_keys = {"password_correct", "page_choice"}
+            for k in list(st.session_state.keys()):
+                lk = str(k).lower()
+                if k in keep_keys:
+                    continue
+                if (
+                    str(k).startswith("_sheet_")
+                    or str(k).startswith("_last_good_")
+                    or str(k).startswith("_guard_")
+                    or "cache" in lk
+                    or "saving_lock" in lk
+                    or "upload_lock" in lk
+                    or "button_lock" in lk
+                ):
+                    try:
+                        del st.session_state[k]
+                    except Exception:
+                        pass
+            try:
+                invalidate_sheet_cache()
+            except Exception:
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    pass
+            st.toast("Data refresh हो गया", icon="✅")
+            st.rerun()
+
         if st.button("🔓 Button/Upload Lock Reset", use_container_width=True):
             for k in list(st.session_state.keys()):
-                if str(k).startswith("_guard_") or "saving_lock" in str(k).lower() or "upload_lock" in str(k).lower():
+                if str(k).startswith("_guard_") or "saving_lock" in str(k).lower() or "upload_lock" in str(k).lower() or "button_lock" in str(k).lower():
                     del st.session_state[k]
             st.success("Locks reset हो गए।")
 
