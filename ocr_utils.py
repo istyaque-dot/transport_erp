@@ -17,6 +17,25 @@ except Exception:  # dependency may not be installed before deploy
 from a4_pdf_utils import is_image_upload, is_pdf_upload, uploaded_file_bytes, render_pdf_bytes_to_images
 
 
+class OcrApiDisabledError(RuntimeError):
+    pass
+
+
+def clean_ocr_exception_message(exc: Exception) -> str:
+    msg = str(exc or '')
+    low = msg.lower()
+    if 'cloud vision api has not been used' in low or 'disabled' in low and 'vision.googleapis.com' in low:
+        return (
+            'Google Cloud Vision API disabled है. Google Cloud Console में Vision API enable करें, '
+            'फिर Streamlit app reboot करें. Enable करने के बाद 2–5 minute wait करें.'
+        )
+    if 'permission' in low or '403' in low:
+        return 'Google Vision OCR permission/API issue है. Service account project में Vision API enabled और permission सही होनी चाहिए.'
+    if 'google-cloud-vision package' in msg:
+        return msg
+    return msg[:500]
+
+
 @dataclass
 class OcrFields:
     text: str = ""
@@ -74,9 +93,12 @@ def run_google_vision_ocr(uploaded_file: Any) -> str:
         return ""
     client = get_vision_client()
     image = vision.Image(content=data)
-    response = client.document_text_detection(image=image)
+    try:
+        response = client.document_text_detection(image=image)
+    except Exception as exc:
+        raise OcrApiDisabledError(clean_ocr_exception_message(exc)) from exc
     if getattr(response, "error", None) and response.error.message:
-        raise RuntimeError(response.error.message)
+        raise OcrApiDisabledError(clean_ocr_exception_message(RuntimeError(response.error.message)))
     return response.full_text_annotation.text or ""
 
 

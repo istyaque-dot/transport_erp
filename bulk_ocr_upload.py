@@ -8,7 +8,7 @@ import streamlit as st
 from a4_pdf_utils import build_a4_full_pdf_from_uploads, build_single_upload_as_a4_pdf
 from crop_utils import get_processed_image, get_processed_pdf_bytes
 from documents import append_documents_log, get_bookings_df, save_gr_links, upload_to_drive
-from ocr_utils import best_booking_match, parse_ocr_fields, run_google_vision_ocr
+from ocr_utils import best_booking_match, clean_ocr_exception_message, parse_ocr_fields, run_google_vision_ocr
 from sheet_utils import connect_to_sheet, format_trip_label, invalidate_sheet_cache, safe_cell
 
 
@@ -60,12 +60,13 @@ def _run_ocr_for_files(files, bookings_df):
                 "selected_row_index": best.get("row_index"),
             })
         except Exception as exc:
+            short_msg = clean_ocr_exception_message(exc)
             results.append({
                 "file_index": i,
                 "file_name": getattr(f, "name", f"file_{i+1}"),
                 "ocr_text": "",
                 "fields": parse_ocr_fields(""),
-                "best": {"score": 0, "row_index": None, "match": None, "needs_confirm": True, "status": f"OCR error: {exc}"},
+                "best": {"score": 0, "row_index": None, "match": None, "needs_confirm": True, "status": f"OCR setup/API error: {short_msg}"},
                 "selected_row_index": None,
             })
         progress.progress((i + 1) / max(len(files), 1))
@@ -124,8 +125,12 @@ def _render_match_review(results, bookings_df):
                 st.success("4-field high confidence match: confirm की जरूरत नहीं।")
                 final_map[r["file_index"]] = current_idx
 
-            with st.expander("OCR raw text", expanded=False):
-                st.text(r.get("ocr_text", "")[:4000])
+            raw_text = r.get("ocr_text", "") or ""
+            if raw_text:
+                with st.expander("OCR raw text", expanded=False):
+                    st.text(raw_text[:4000])
+            else:
+                st.caption("OCR raw text empty है — API/setup issue या image से text read नहीं हुआ।")
 
     st.info(f"Auto matched: {auto_count} | Confirm/manual: {problem_count}")
     return final_map
@@ -265,6 +270,11 @@ def show_bulk_ocr_upload_page():
     if len(results) != len(files):
         st.warning("Files बदल गई हैं. OCR दोबारा चलाएँ।")
         return
+
+    api_errors = [str((r.get("best") or {}).get("status", "")) for r in results if "OCR setup/API error" in str((r.get("best") or {}).get("status", ""))]
+    if api_errors:
+        st.error(api_errors[0].replace("OCR setup/API error: ", ""))
+        st.info("OCR शुरू करने से पहले Google Cloud Vision API enable करना जरूरी है. API enable होने तक OCR fields Not found आएँगे.")
 
     st.subheader("Review Match")
     final_map = _render_match_review(results, df)
