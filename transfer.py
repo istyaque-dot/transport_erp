@@ -4,24 +4,15 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-@st.cache_resource(ttl=86400)
-def connect_to_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/spreadsheets"
-    ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    return client.open("Khan_Transport_ERP")
+from sheet_utils import connect_to_sheet, invalidate_sheet_cache
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_ledger_stats(sheet_name):
     """लेजर के आखिरी कॉलम की अंतिम वैल्यू (Current Balance) उठाना"""
     try:
@@ -69,7 +60,7 @@ def save_transfer_ledgers(date_val, from_acc, to_acc, amount, remarks):
             else:
                 db.worksheet(t_s).append_row([str(date_val), "Transfer", "Credit", f"From: {from_acc} | {remarks}", amt], table_range="A1")
         
-        st.cache_data.clear()
+        invalidate_sheet_cache()
         return True
     except: return False
 

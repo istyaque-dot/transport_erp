@@ -5,7 +5,12 @@ import pandas as pd
 import requests
 import base64
 from PIL import Image
+from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from a4_pdf_utils import build_a4_full_pdf_from_uploads
 import io
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from supabase import create_client
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
@@ -19,7 +24,10 @@ def get_supabase_client():
     clean_key = str(st.secrets["supabase"]["key"]).strip()
     return create_client(clean_url, clean_key)
 
-supabase = get_supabase_client()
+try:
+    supabase = get_supabase_client()
+except Exception:
+    supabase = None
 
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
@@ -28,47 +36,28 @@ def upload_to_drive(file_bytes, file_name):
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
-        res = requests.post(WEB_APP_URL, data=payload)
+        res = requests.post(WEB_APP_URL, data=payload, timeout=60)
         result = res.text.strip()
         return result if "Error" not in result else None
     except: return None
 
-# 🟢 A4 SIZE PDF LOGIC
-def prepare_pod_file(uploaded_files):
-    if not uploaded_files: return None, None
-    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
-        return uploaded_files[0].read(), "pdf"
-        
-    A4_WIDTH = 2480
-    A4_HEIGHT = 3508
-    
-    a4_images = []
-    for file in uploaded_files:
-        if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
-            img = Image.open(file)
-            if img.mode != 'RGB': img = img.convert('RGB')
-            
-            try:
-                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
-            except AttributeError:
-                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
-            
-            a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-            
-            x_offset = (A4_WIDTH - img.width) // 2
-            y_offset = (A4_HEIGHT - img.height) // 2
-            a4_canvas.paste(img, (x_offset, y_offset))
-            
-            a4_images.append(a4_canvas)
-            
-    if a4_images:
-        pdf_bytes = io.BytesIO()
-        if len(a4_images) == 1: 
-            a4_images[0].save(pdf_bytes, format="PDF", resolution=300)
-        else: 
-            a4_images[0].save(pdf_bytes, format="PDF", resolution=300, save_all=True, append_images=a4_images[1:])
-        return pdf_bytes.getvalue(), "pdf"
-    return None, None
+# 🟢 A4 FULL-PAGE PDF LOGIC
+def prepare_pod_file(uploaded_files, crop_map=None):
+    """Return print-ready A4 PDF bytes for GR/POD uploads.
+
+    Fixes the issue where a GR/POD copy is pasted small in the centre of an A4 page.
+    Images and already-made PDFs are auto-cropped for white margins and then fitted
+    to A4 at maximum size without stretching or cutting.
+    """
+    if not uploaded_files:
+        return None, None
+    final_pdf = build_a4_full_pdf_from_uploads(
+        list(uploaded_files),
+        crop_map=crop_map or {},
+        get_processed_image_func=get_processed_image,
+        get_processed_pdf_func=get_processed_pdf_bytes,
+    )
+    return (final_pdf, "pdf") if final_pdf else (None, None)
 
 def save_gr_link_to_db(trip_id, gr_url):
     try:
@@ -102,7 +91,7 @@ def save_booking_to_db(row_data):
         st.error(f"DB Error: {e}")
         return False
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def get_all_trips():
     try:
         response = supabase.table("bookings").select("*").execute()
@@ -175,6 +164,124 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
         save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt)
         return True
     except: return False
+
+# ==========================================
+# ✅ STABILITY PATCH: Google Sheets mode
+# Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
+# इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
+# ==========================================
+from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+
+def save_booking_to_db(row_data):
+    try:
+        db = connect_to_sheet_booking()
+        db.worksheet("Bookings").append_row(row_data, table_range="A1")
+        invalidate_sheet_cache()
+        return True
+    except Exception as e:
+        st.error(f"Booking save error: {e}")
+        return False
+
+@st.cache_data(ttl=600)
+def get_all_trips():
+    try:
+        db = connect_to_sheet_booking()
+        data = db.worksheet("Bookings").get_all_values()
+        if len(data) <= 1:
+            return pd.DataFrame()
+        max_cols = max(len(r) for r in data)
+        rows = [r + [""] * (max_cols - len(r)) for r in data]
+        header = rows[0]
+        return pd.DataFrame(rows[1:], columns=header)
+    except Exception as e:
+        st.error(f"Booking load error: {e}")
+        return pd.DataFrame()
+
+def update_booking_in_db(trip_id, updated_row):
+    try:
+        db = connect_to_sheet_booking()
+        ws = db.worksheet("Bookings")
+        ids = [str(x).strip() for x in ws.col_values(15)]
+        tid = str(trip_id).strip()
+        if tid in ids:
+            row_index = ids.index(tid) + 1
+            ws.update(f"A{row_index}:P{row_index}", [updated_row])
+            invalidate_sheet_cache()
+            return True
+        st.error("Trip ID नहीं मिला।")
+        return False
+    except Exception as e:
+        st.error(f"Booking update error: {e}")
+        return False
+
+def save_gr_link_to_db(trip_id, gr_url):
+    try:
+        db = connect_to_sheet_booking()
+        ws = db.worksheet("Bookings")
+        ids = [str(x).strip() for x in ws.col_values(15)]
+        tid = str(trip_id).strip()
+        if tid in ids:
+            row_index = ids.index(tid) + 1
+            ws.update_cell(row_index, 17, gr_url)
+            invalidate_sheet_cache()
+            return True
+        return False
+    except Exception as e:
+        st.error(f"GR link save error: {e}")
+        return False
+
+def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet_booking()
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        base = [str(date_val), str(trip_id), gr, str(truck_no), str(dest)]
+        db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
+        db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
+        if int(float(uni_amt or 0)) > 0:
+            db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
+        if int(float(ish_amt or 0)) > 0:
+            db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
+        invalidate_sheet_cache()
+        return True
+    except Exception as e:
+        st.error(f"Ledger insert error: {e}")
+        return False
+
+def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        db = connect_to_sheet_booking()
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        ledgers = {
+            "Company_Ledger": int(comp_amt),
+            "Owner_Ledger": int(owner_amt),
+            "Universal_Ledger": int(float(uni_amt or 0)),
+            "Ishtyaque_Ledger": int(float(ish_amt or 0)),
+        }
+        for sheet_name, amt in ledgers.items():
+            if amt == 0 and sheet_name in ["Universal_Ledger", "Ishtyaque_Ledger"]:
+                continue
+            ws = db.worksheet(sheet_name)
+            records = ws.get_all_values()
+            row_to_update = -1
+            for i, row in enumerate(records):
+                if len(row) > 1 and str(row[1]).strip() == str(trip_id).strip():
+                    row_to_update = i + 1
+                    break
+            if sheet_name == "Universal_Ledger":
+                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", amt]
+            elif sheet_name == "Ishtyaque_Ledger":
+                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", amt]
+            else:
+                new_row = [str(date_val), str(trip_id), gr, str(truck_no), str(dest), amt]
+            if row_to_update != -1:
+                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row])
+            else:
+                ws.append_row(new_row, table_range="A1")
+        invalidate_sheet_cache()
+        return True
+    except Exception as e:
+        st.error(f"Ledger update error: {e}")
+        return False
 
 # ==========================================
 # 🎨 CSS
@@ -454,7 +561,7 @@ def show_booking_page():
                                 d['to_loc'], d['comp_freight'], d['owner_freight'],
                                 final_uni_amt, d['ishtyaque_amt']
                             )
-                            st.cache_data.clear()
+                            invalidate_sheet_cache()
                             st.success(f"✅ गाड़ी {d['truck_no']} की बुकिंग सेव हो गई!")
                             time.sleep(1.5)
                             st.session_state.bk_saving_lock = False
@@ -477,32 +584,55 @@ def show_booking_page():
         if df_trips.empty:
             st.info("कोई पुरानी बुकिंग नहीं मिली।")
         else:
-            df_last = df_trips.tail(50).iloc[::-1]
-            labels, trip_ids = [], []
-            for _, row in df_last.iterrows():
-                try:
-                    gr_disp = (str(row.iloc[8])
-                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).lower() != "nan"
-                               else "N/A")
-                    labels.append(
-                        f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  "
-                        f"📍 {row.iloc[7]}  |  GR: {gr_disp}"
-                    )
-                    trip_ids.append(str(row.iloc[14]))
-                except: pass
+            # ✅ Full edit dropdown update
+            # पहले सिर्फ last 50 bookings dropdown में आती थीं. अब पूरी Bookings sheet list आएगी.
+            # Search optional है: खाली छोड़ने पर पूरी list दिखेगी.
+            df_edit = df_trips.copy()
+            if df_edit.shape[1] > 14:
+                df_edit = df_edit[df_edit.iloc[:, 14].astype(str).str.strip() != ""]
+            df_edit = df_edit.iloc[::-1].reset_index(drop=True)
 
-            selected_label = st.selectbox(
+            search_text = st.text_input(
+                "🔎 Booking search",
+                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
+            ).strip().lower()
+
+            if search_text and df_edit.shape[1] > 14:
+                def _match_edit_row(row):
+                    cols_to_search = [0, 6, 7, 8, 14]
+                    joined = " ".join(
+                        str(row.iloc[i]) for i in cols_to_search
+                        if i < len(row) and pd.notna(row.iloc[i])
+                    ).lower()
+                    return search_text in joined
+                df_edit = df_edit[df_edit.apply(_match_edit_row, axis=1)].reset_index(drop=True)
+
+            st.caption(f"Dropdown में {len(df_edit)} booking(s) loaded | Total bookings: {len(df_trips)}")
+
+            labels, trip_ids = [], []
+            for _, row in df_edit.iterrows():
+                try:
+                    gr_disp = (str(row.iloc[8]).strip()
+                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).strip().lower() not in ["", "nan"]
+                               else "N/A")
+                    trip_disp = str(row.iloc[14]).strip() if len(row) > 14 else "N/A"
+                    labels.append(format_trip_label(row))
+                    trip_ids.append(trip_disp)
+                except Exception:
+                    pass
+
+            selected_idx = st.selectbox(
                 "✏️ एडिट करने के लिए गाड़ी चुनें:",
-                ["चुनें..."] + labels
+                ["चुनें..."] + list(range(len(labels))),
+                format_func=lambda x: "चुनें..." if x == "चुनें..." else labels[x]
             )
             st.markdown("<hr style='margin:0.5em 0;border-color:#e2e8f0'>",
                         unsafe_allow_html=True)
 
-            if selected_label != "चुनें...":
-                idx = labels.index(selected_label)
-                selected_trip_id = trip_ids[idx]
-                row_data = df_last[
-                    df_last.iloc[:, 14].astype(str) == selected_trip_id
+            if selected_idx != "चुनें...":
+                selected_trip_id = trip_ids[selected_idx]
+                row_data = df_edit[
+                    df_edit.iloc[:, 14].astype(str).str.strip() == selected_trip_id
                 ].iloc[0]
 
                 col_edit, col_gr = st.columns([2.2, 1], gap="small")
@@ -571,7 +701,7 @@ def show_booking_page():
                                         e_date, selected_trip_id, final_gr, e_truck, e_to,
                                         e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt
                                     )
-                                    st.cache_data.clear()
+                                    invalidate_sheet_cache()
                                     st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
                                     time.sleep(1.5)
                                     st.rerun()
@@ -608,33 +738,49 @@ def show_booking_page():
                         """, unsafe_allow_html=True)
 
                     gr_files = st.file_uploader(
-                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png"],
+                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"],
                         accept_multiple_files=True,
                         key=f"gr_up_{selected_trip_id}",
                         label_visibility="collapsed"
                     )
+                    gr_crop_map = {}
                     if gr_files:
                         st.caption(f"📎 {len(gr_files)} फ़ाइल चुनी गई")
+                        gr_crop_map = render_crop_tool(
+                            gr_files,
+                            key_prefix=f"booking_gr_crop_{selected_trip_id}",
+                            title="✂️ GR Crop Tool"
+                        )
 
-                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True):
-                        if gr_files:
-                            with st.spinner("GR (A4 PDF) Drive पर जा रही है..."):
-                                final_bytes, file_ext = prepare_pod_file(gr_files)
-                                if final_bytes:
+                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True, key=f"gr_upload_btn_{selected_trip_id}"):
+                        if not gr_files:
+                            st.warning("⚠️ पहले फ़ाइल चुनें!")
+                        else:
+                            status = st.status("⏳ GR upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
+                            try:
+                                status.write("1/3: A4 full-page PDF बन रही है...")
+                                final_bytes, file_ext = prepare_pod_file(gr_files, gr_crop_map)
+                                if not final_bytes:
+                                    status.update(label="❌ फ़ाइल process नहीं हुई।", state="error")
+                                else:
+                                    status.write("2/3: Google Drive पर upload हो रहा है...")
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
-                                    if d_id:
-                                        gr_url = (d_id if d_id.startswith("http")
-                                                  else f"https://drive.google.com/file/d/{d_id}/view")
+                                    if not d_id:
+                                        status.update(label="❌ Drive upload fail हुआ।", state="error")
+                                    else:
+                                        status.write("3/3: Google Sheet में link save हो रहा है...")
+                                        gr_url = (d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view")
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
-                                            st.cache_data.clear()
-                                            st.success("✅ A4 साइज़ GR सेव हो गई!")
-                                            time.sleep(1.5)
+                                            invalidate_sheet_cache()
+                                            status.update(label="✅ GR A4 full-page PDF save हो गई।", state="complete")
+                                            st.success("✅ GR सुरक्षित है।")
+                                            time.sleep(1.0)
                                             st.rerun()
-                                        else: st.error("❌ Link save फेल!")
-                                    else: st.error("❌ Drive अपलोड फेल!")
-                                else: st.error("❌ फ़ाइल process नहीं हुई।")
-                        else: st.warning("⚠️ पहले फ़ाइल चुनें!")
+                                        else:
+                                            status.update(label="❌ Link save fail हुआ।", state="error")
+                            except Exception as exc:
+                                status.update(label=f"❌ Upload error: {exc}", state="error")
                     st.markdown("</div>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════
@@ -739,7 +885,7 @@ def show_booking_page():
                                 )
                             except: error_count += 1; continue
 
-                    st.cache_data.clear()
+                    invalidate_sheet_cache()
                     if success_count > 0:
                         st.success(f"🎊 {success_count} गाड़ियाँ सफलतापूर्वक सेव हो गईं!")
                     if error_count > 0:
