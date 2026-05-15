@@ -5,12 +5,9 @@ import pandas as pd
 import requests
 import base64
 from PIL import Image
-from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
-from a4_pdf_utils import build_a4_full_pdf_from_uploads
 import io
-import json
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import zipfile
+import re
 from supabase import create_client
 
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
@@ -24,10 +21,7 @@ def get_supabase_client():
     clean_key = str(st.secrets["supabase"]["key"]).strip()
     return create_client(clean_url, clean_key)
 
-try:
-    supabase = get_supabase_client()
-except Exception:
-    supabase = None
+supabase = get_supabase_client()
 
 def upload_to_drive(file_bytes, file_name):
     if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
@@ -36,34 +30,203 @@ def upload_to_drive(file_bytes, file_name):
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
-        res = requests.post(WEB_APP_URL, data=payload, timeout=60)
+        res = requests.post(WEB_APP_URL, data=payload)
         result = res.text.strip()
         return result if "Error" not in result else None
     except: return None
 
-# 🟢 A4 FULL-PAGE PDF LOGIC
-def prepare_pod_file(uploaded_files, crop_map=None):
-    """Return print-ready A4 PDF bytes for GR/POD uploads.
-
-    Fixes the issue where a GR/POD copy is pasted small in the centre of an A4 page.
-    Images and already-made PDFs are auto-cropped for white margins and then fitted
-    to A4 at maximum size without stretching or cutting.
-    """
-    if not uploaded_files:
-        return None, None
-    final_pdf = build_a4_full_pdf_from_uploads(
-        list(uploaded_files),
-        crop_map=crop_map or {},
-        get_processed_image_func=get_processed_image,
-        get_processed_pdf_func=get_processed_pdf_bytes,
-    )
-    return (final_pdf, "pdf") if final_pdf else (None, None)
+# 🟢 A4 SIZE PDF LOGIC
+def prepare_pod_file(uploaded_files):
+    if not uploaded_files: return None, None
+    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
+        return uploaded_files[0].read(), "pdf"
+        
+    A4_WIDTH = 2480
+    A4_HEIGHT = 3508
+    
+    a4_images = []
+    for file in uploaded_files:
+        if file.name.lower().endswith((".jpg", ".jpeg", ".png")):
+            img = Image.open(file)
+            if img.mode != 'RGB': img = img.convert('RGB')
+            
+            try:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
+            except AttributeError:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
+            
+            a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
+            
+            x_offset = (A4_WIDTH - img.width) // 2
+            y_offset = (A4_HEIGHT - img.height) // 2
+            a4_canvas.paste(img, (x_offset, y_offset))
+            
+            a4_images.append(a4_canvas)
+            
+    if a4_images:
+        pdf_bytes = io.BytesIO()
+        if len(a4_images) == 1: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300)
+        else: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300, save_all=True, append_images=a4_images[1:])
+        return pdf_bytes.getvalue(), "pdf"
+    return None, None
 
 def save_gr_link_to_db(trip_id, gr_url):
     try:
         supabase.table("bookings").update({"google_url": gr_url}).eq("trip_id", str(trip_id)).execute()
         return True
     except: return False
+
+
+
+# ==========================================
+# 📥 BULK EDIT / GR-POD FILE UPDATE HELPERS
+# ==========================================
+def _norm_key(val):
+    """GR/Truck exact matching: spaces, hyphen, case ignore; 45.0 -> 45."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    text = str(val).strip()
+    if text.lower() in ("nan", "none", "n/a", ""):
+        return ""
+    if re.fullmatch(r"\d+\.0", text):
+        text = text[:-2]
+    return re.sub(r"[^A-Za-z0-9]", "", text).upper()
+
+
+def _clean_str(val, default=""):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return default
+    text = str(val).strip()
+    return default if text.lower() in ("nan", "none", "") else text
+
+
+def _clean_num(val, default=None):
+    if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
+        return default
+    try:
+        return float(val)
+    except Exception:
+        return default
+
+
+class _BytesFile:
+    def __init__(self, name, data):
+        self.name = name
+        self._data = data
+        self._pos = 0
+    def read(self):
+        return self._data
+    def getvalue(self):
+        return self._data
+
+
+def _safe_filename_part(val, fallback="NA"):
+    text = _clean_str(val, fallback)
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+    return text or fallback
+
+
+def _load_zip_files(uploaded_zip):
+    """Return dict filename -> bytes for PDFs/images inside ZIP."""
+    files = {}
+    if uploaded_zip is None:
+        return files
+    try:
+        raw = uploaded_zip.getvalue() if hasattr(uploaded_zip, 'getvalue') else uploaded_zip.read()
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                base = info.filename.split('/')[-1]
+                if not base or base.startswith('.'):
+                    continue
+                if base.lower().endswith((".pdf", ".jpg", ".jpeg", ".png")):
+                    files[base] = zf.read(info.filename)
+    except Exception as e:
+        st.error(f"ZIP पढ़ने में दिक्कत: {e}")
+    return files
+
+
+def _find_files_for_gr(gr_no, file_name_hint, zip_files, allow_multiple=False):
+    """Find file(s) by exact file hint or exact GR token in filename."""
+    if not zip_files:
+        return []
+    hint = _clean_str(file_name_hint)
+    if hint:
+        hints = [h.strip() for h in re.split(r"[|,;]", hint) if h.strip()]
+        matched = []
+        for h in hints:
+            for fn, data in zip_files.items():
+                if fn == h or fn.lower() == h.lower():
+                    matched.append((fn, data))
+        if matched:
+            return matched if allow_multiple else matched[:1]
+    target = _norm_key(gr_no)
+    if not target:
+        return []
+    candidates = []
+    for fn, data in zip_files.items():
+        stem = re.sub(r"\.[^.]+$", "", fn)
+        tokens = [_norm_key(x) for x in re.split(r"[^A-Za-z0-9]+", stem)]
+        if target in tokens:
+            candidates.append((fn, data))
+    if candidates:
+        return candidates if allow_multiple else candidates[:1]
+    # digit boundary fallback for GR like 176 in file names
+    gr_raw = str(gr_no).replace('.0', '').strip()
+    for fn, data in zip_files.items():
+        stem = re.sub(r"\.[^.]+$", "", fn)
+        if re.search(rf"(?<!\d){re.escape(gr_raw)}(?!\d)", stem):
+            candidates.append((fn, data))
+    return candidates if allow_multiple else candidates[:1]
+
+
+def _build_bulk_edit_template():
+    cols = [
+        "GR No", "Date", "Truck No", "Destination", "Company", "Company Rate",
+        "Weight", "Owner Rate", "From", "Universal Amt", "Comments",
+        "Ishtyaque Profit", "GR File Name", "POD File Name"
+    ]
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        pd.DataFrame(columns=cols).to_excel(writer, index=False, sheet_name="BulkEdit")
+    return output.getvalue()
+
+
+def _make_drive_url(d_id):
+    if not d_id:
+        return None
+    return d_id if str(d_id).startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
+
+
+def save_pod_link_to_ledger(trip_id, gr_no, truck_no, destination, pod_url, pages=1):
+    """Save POD link in Owner_Ledger. Works with Google Sheet if available, else tries Supabase owner_ledger."""
+    try:
+        from database import connect_to_sheet
+        db = connect_to_sheet()
+        db.worksheet("Owner_Ledger").append_row([
+            str(datetime.date.today()), str(trip_id), str(gr_no), str(truck_no),
+            f"POD Link: {pod_url}", 0
+        ], table_range="A1")
+        return True
+    except Exception:
+        pass
+    try:
+        supabase.table("owner_ledger").insert({
+            "date": str(datetime.date.today()),
+            "trip_id": str(trip_id),
+            "gr_no": str(gr_no),
+            "truck_no": str(truck_no),
+            "destination": str(destination),
+            "description": f"POD Link: {pod_url}",
+            "amount": 0
+        }).execute()
+        return True
+    except Exception as e:
+        st.warning(f"POD link ledger में save नहीं हो पाया: {e}")
+        return False
 
 def save_booking_to_db(row_data):
     try:
@@ -91,7 +254,7 @@ def save_booking_to_db(row_data):
         st.error(f"DB Error: {e}")
         return False
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)
 def get_all_trips():
     try:
         response = supabase.table("bookings").select("*").execute()
@@ -164,124 +327,6 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
         save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt)
         return True
     except: return False
-
-# ==========================================
-# ✅ STABILITY PATCH: Google Sheets mode
-# Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
-# इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
-# ==========================================
-from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
-
-def save_booking_to_db(row_data):
-    try:
-        db = connect_to_sheet_booking()
-        db.worksheet("Bookings").append_row(row_data, table_range="A1")
-        invalidate_sheet_cache()
-        return True
-    except Exception as e:
-        st.error(f"Booking save error: {e}")
-        return False
-
-@st.cache_data(ttl=600)
-def get_all_trips():
-    try:
-        db = connect_to_sheet_booking()
-        data = db.worksheet("Bookings").get_all_values()
-        if len(data) <= 1:
-            return pd.DataFrame()
-        max_cols = max(len(r) for r in data)
-        rows = [r + [""] * (max_cols - len(r)) for r in data]
-        header = rows[0]
-        return pd.DataFrame(rows[1:], columns=header)
-    except Exception as e:
-        st.error(f"Booking load error: {e}")
-        return pd.DataFrame()
-
-def update_booking_in_db(trip_id, updated_row):
-    try:
-        db = connect_to_sheet_booking()
-        ws = db.worksheet("Bookings")
-        ids = [str(x).strip() for x in ws.col_values(15)]
-        tid = str(trip_id).strip()
-        if tid in ids:
-            row_index = ids.index(tid) + 1
-            ws.update(f"A{row_index}:P{row_index}", [updated_row])
-            invalidate_sheet_cache()
-            return True
-        st.error("Trip ID नहीं मिला।")
-        return False
-    except Exception as e:
-        st.error(f"Booking update error: {e}")
-        return False
-
-def save_gr_link_to_db(trip_id, gr_url):
-    try:
-        db = connect_to_sheet_booking()
-        ws = db.worksheet("Bookings")
-        ids = [str(x).strip() for x in ws.col_values(15)]
-        tid = str(trip_id).strip()
-        if tid in ids:
-            row_index = ids.index(tid) + 1
-            ws.update_cell(row_index, 17, gr_url)
-            invalidate_sheet_cache()
-            return True
-        return False
-    except Exception as e:
-        st.error(f"GR link save error: {e}")
-        return False
-
-def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
-    try:
-        db = connect_to_sheet_booking()
-        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
-        base = [str(date_val), str(trip_id), gr, str(truck_no), str(dest)]
-        db.worksheet("Company_Ledger").append_row(base + [int(comp_amt)], table_range="A1")
-        db.worksheet("Owner_Ledger").append_row(base + [int(owner_amt)], table_range="A1")
-        if int(float(uni_amt or 0)) > 0:
-            db.worksheet("Universal_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", int(uni_amt)], table_range="A1")
-        if int(float(ish_amt or 0)) > 0:
-            db.worksheet("Ishtyaque_Ledger").append_row([str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", int(ish_amt)], table_range="A1")
-        invalidate_sheet_cache()
-        return True
-    except Exception as e:
-        st.error(f"Ledger insert error: {e}")
-        return False
-
-def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
-    try:
-        db = connect_to_sheet_booking()
-        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
-        ledgers = {
-            "Company_Ledger": int(comp_amt),
-            "Owner_Ledger": int(owner_amt),
-            "Universal_Ledger": int(float(uni_amt or 0)),
-            "Ishtyaque_Ledger": int(float(ish_amt or 0)),
-        }
-        for sheet_name, amt in ledgers.items():
-            if amt == 0 and sheet_name in ["Universal_Ledger", "Ishtyaque_Ledger"]:
-                continue
-            ws = db.worksheet(sheet_name)
-            records = ws.get_all_values()
-            row_to_update = -1
-            for i, row in enumerate(records):
-                if len(row) > 1 and str(row[1]).strip() == str(trip_id).strip():
-                    row_to_update = i + 1
-                    break
-            if sheet_name == "Universal_Ledger":
-                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Freight: {truck_no}", amt]
-            elif sheet_name == "Ishtyaque_Ledger":
-                new_row = [str(date_val), str(trip_id), "N/A", "N/A", f"Profit: {truck_no}", amt]
-            else:
-                new_row = [str(date_val), str(trip_id), gr, str(truck_no), str(dest), amt]
-            if row_to_update != -1:
-                ws.update(f"A{row_to_update}:F{row_to_update}", [new_row])
-            else:
-                ws.append_row(new_row, table_range="A1")
-        invalidate_sheet_cache()
-        return True
-    except Exception as e:
-        st.error(f"Ledger update error: {e}")
-        return False
 
 # ==========================================
 # 🎨 CSS
@@ -561,7 +606,7 @@ def show_booking_page():
                                 d['to_loc'], d['comp_freight'], d['owner_freight'],
                                 final_uni_amt, d['ishtyaque_amt']
                             )
-                            invalidate_sheet_cache()
+                            st.cache_data.clear()
                             st.success(f"✅ गाड़ी {d['truck_no']} की बुकिंग सेव हो गई!")
                             time.sleep(1.5)
                             st.session_state.bk_saving_lock = False
@@ -584,55 +629,186 @@ def show_booking_page():
         if df_trips.empty:
             st.info("कोई पुरानी बुकिंग नहीं मिली।")
         else:
-            # ✅ Full edit dropdown update
-            # पहले सिर्फ last 50 bookings dropdown में आती थीं. अब पूरी Bookings sheet list आएगी.
-            # Search optional है: खाली छोड़ने पर पूरी list दिखेगी.
-            df_edit = df_trips.copy()
-            if df_edit.shape[1] > 14:
-                df_edit = df_edit[df_edit.iloc[:, 14].astype(str).str.strip() != ""]
-            df_edit = df_edit.iloc[::-1].reset_index(drop=True)
+            # ─────────────────────────────────────
+            # 📥 Bulk Edit / GR-POD Update inside Edit tab
+            # ─────────────────────────────────────
+            st.markdown("### 📥 Bulk Upload से Existing Booking Edit / GR-POD Update")
+            with st.expander("📥 Excel + GR/POD ZIP से selected GR update करें", expanded=False):
+                cdl, cinf = st.columns([1, 2])
+                with cdl:
+                    st.download_button(
+                        "⬇️ Bulk Edit Template",
+                        data=_build_bulk_edit_template(),
+                        file_name="booking_bulk_edit_gr_pod_update_template.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                with cinf:
+                    st.info("Excel में GR No जरूरी है। Blank cell छोड़ने पर existing data वैसा ही रहेगा। GR/POD ZIP optional हैं।")
 
-            search_text = st.text_input(
-                "🔎 Booking search",
-                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
-            ).strip().lower()
+                bulk_excel = st.file_uploader("1) Bulk Edit Excel/CSV upload करें", type=["xlsx", "xls", "csv"], key="booking_bulk_edit_excel")
+                czip1, czip2 = st.columns(2)
+                with czip1:
+                    bulk_gr_zip = st.file_uploader("2) GR PDF/Image ZIP upload करें", type=["zip"], key="booking_bulk_gr_zip")
+                with czip2:
+                    bulk_pod_zip = st.file_uploader("3) POD PDF/Image ZIP upload करें", type=["zip"], key="booking_bulk_pod_zip")
 
-            if search_text and df_edit.shape[1] > 14:
-                def _match_edit_row(row):
-                    cols_to_search = [0, 6, 7, 8, 14]
-                    joined = " ".join(
-                        str(row.iloc[i]) for i in cols_to_search
-                        if i < len(row) and pd.notna(row.iloc[i])
-                    ).lower()
-                    return search_text in joined
-                df_edit = df_edit[df_edit.apply(_match_edit_row, axis=1)].reset_index(drop=True)
+                if bulk_excel is not None:
+                    try:
+                        df_bulk = (pd.read_csv(bulk_excel) if bulk_excel.name.lower().endswith('.csv') else pd.read_excel(bulk_excel))
+                        gr_zip_files = _load_zip_files(bulk_gr_zip) if bulk_gr_zip is not None else {}
+                        pod_zip_files = _load_zip_files(bulk_pod_zip) if bulk_pod_zip is not None else {}
 
-            st.caption(f"Dropdown में {len(df_edit)} booking(s) loaded | Total bookings: {len(df_trips)}")
+                        preview_rows = []
+                        for _, row in df_bulk.iterrows():
+                            gr = _clean_str(row.get("GR No", ""))
+                            matches = df_trips[df_trips.iloc[:, 8].apply(_norm_key) == _norm_key(gr)] if gr else pd.DataFrame()
+                            status = "✅ Ready" if len(matches) == 1 else ("⚠️ Duplicate GR" if len(matches) > 1 else "❌ GR Not Found")
+                            gr_match = _find_files_for_gr(gr, row.get("GR File Name", ""), gr_zip_files, allow_multiple=False)
+                            pod_match = _find_files_for_gr(gr, row.get("POD File Name", ""), pod_zip_files, allow_multiple=True)
+                            preview_rows.append({
+                                "Status": status,
+                                "GR No": gr,
+                                "Matched Booking": len(matches),
+                                "GR File": gr_match[0][0] if gr_match else "",
+                                "POD Files": len(pod_match),
+                                "Truck Excel": _clean_str(row.get("Truck No", "")),
+                                "Destination Excel": _clean_str(row.get("Destination", "")),
+                            })
+                        st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, height=220)
 
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            update_fields = st.checkbox("Excel fields update करें", value=True)
+                        with c2:
+                            upload_gr_pdf = st.checkbox("GR PDF/Image save करें", value=True)
+                        with c3:
+                            upload_pod_pdf = st.checkbox("POD PDF/Image save करें", value=True)
+
+                        if st.button("🚀 Ready Rows Update करें", type="primary", use_container_width=True):
+                            success = skipped = gr_saved = pod_saved = failed_files = 0
+                            progress = st.progress(0, text="Bulk update शुरू...")
+                            total = max(len(df_bulk), 1)
+
+                            for idx, row in df_bulk.iterrows():
+                                try:
+                                    gr = _clean_str(row.get("GR No", ""))
+                                    matches = df_trips[df_trips.iloc[:, 8].apply(_norm_key) == _norm_key(gr)] if gr else pd.DataFrame()
+                                    if len(matches) != 1:
+                                        skipped += 1
+                                        progress.progress((idx + 1) / total, text=f"Skipped {skipped}: GR {gr}")
+                                        continue
+
+                                    current = matches.iloc[0].copy()
+                                    trip_id = str(current.iloc[14])
+
+                                    def keep_or_new(col_name, current_val, numeric=False):
+                                        val = row.get(col_name, "")
+                                        if numeric:
+                                            n = _clean_num(val, None)
+                                            return int(n) if n is not None else int(float(current_val or 0))
+                                        s = _clean_str(val, "")
+                                        return s if s else _clean_str(current_val, "")
+
+                                    final_date = keep_or_new("Date", current.iloc[0])
+                                    final_from = keep_or_new("From", current.iloc[1])
+                                    final_company = keep_or_new("Company", current.iloc[2])
+                                    final_owner_rate = keep_or_new("Owner Rate", current.iloc[3], numeric=True)
+                                    final_company_rate = keep_or_new("Company Rate", current.iloc[4], numeric=True)
+                                    final_weight = keep_or_new("Weight", current.iloc[5], numeric=True)
+                                    final_truck = keep_or_new("Truck No", current.iloc[6])
+                                    final_dest = keep_or_new("Destination", current.iloc[7])
+                                    final_gr = gr or keep_or_new("GR No", current.iloc[8])
+                                    final_universal = keep_or_new("Universal Amt", current.iloc[9], numeric=True)
+                                    final_comments = keep_or_new("Comments", current.iloc[10])
+                                    final_ish = keep_or_new("Ishtyaque Profit", current.iloc[15], numeric=True)
+
+                                    final_comp_freight = int(final_weight * final_company_rate) + int(final_universal)
+                                    final_owner_freight = int(final_weight * final_owner_rate)
+                                    final_uni_pay = int(final_universal * 0.99) if int(final_universal) > 0 else 0
+
+                                    if update_fields:
+                                        updated_row = [
+                                            str(final_date), str(final_from), str(final_company),
+                                            final_owner_rate, final_company_rate, final_weight,
+                                            str(final_truck), str(final_dest), str(final_gr),
+                                            final_universal, str(final_comments), final_comp_freight,
+                                            final_owner_freight, final_uni_pay, trip_id, final_ish
+                                        ]
+                                        if update_booking_in_db(trip_id, updated_row):
+                                            update_ledgers(final_date, trip_id, final_gr, final_truck, final_dest,
+                                                           final_comp_freight, final_owner_freight, final_uni_pay, final_ish)
+
+                                    if upload_gr_pdf and gr_zip_files:
+                                        gr_files_found = _find_files_for_gr(final_gr, row.get("GR File Name", ""), gr_zip_files, allow_multiple=False)
+                                        if gr_files_found:
+                                            fn, data = gr_files_found[0]
+                                            final_bytes, file_ext = prepare_pod_file([_BytesFile(fn, data)])
+                                            if final_bytes:
+                                                clean_name = f"GR_{_safe_filename_part(final_gr)}_{_safe_filename_part(final_truck)}_{_safe_filename_part(final_dest)}.pdf"
+                                                d_id = upload_to_drive(final_bytes, clean_name)
+                                                url = _make_drive_url(d_id)
+                                                if url and save_gr_link_to_db(trip_id, url):
+                                                    gr_saved += 1
+                                                else:
+                                                    failed_files += 1
+                                        elif row.get("GR File Name", "") or gr_zip_files:
+                                            failed_files += 1
+
+                                    if upload_pod_pdf and pod_zip_files:
+                                        pod_files_found = _find_files_for_gr(final_gr, row.get("POD File Name", ""), pod_zip_files, allow_multiple=True)
+                                        if pod_files_found:
+                                            pod_inputs = [_BytesFile(fn, data) for fn, data in pod_files_found]
+                                            final_bytes, file_ext = prepare_pod_file(pod_inputs)
+                                            if final_bytes:
+                                                clean_name = f"POD_{_safe_filename_part(final_gr)}_{_safe_filename_part(final_truck)}_{_safe_filename_part(final_dest)}.pdf"
+                                                d_id = upload_to_drive(final_bytes, clean_name)
+                                                url = _make_drive_url(d_id)
+                                                if url and save_pod_link_to_ledger(trip_id, final_gr, final_truck, final_dest, url, pages=len(pod_inputs)):
+                                                    pod_saved += 1
+                                                else:
+                                                    failed_files += 1
+                                        elif row.get("POD File Name", "") or pod_zip_files:
+                                            failed_files += 1
+
+                                    success += 1
+                                    progress.progress((idx + 1) / total, text=f"Updated {success}, skipped {skipped}, GR {gr_saved}, POD {pod_saved}")
+                                except Exception as e:
+                                    skipped += 1
+                                    st.warning(f"Row {idx + 2} skip: {e}")
+
+                            st.cache_data.clear()
+                            st.success(f"✅ Bulk complete: {success} row processed, {skipped} skipped, {gr_saved} GR saved, {pod_saved} POD saved, {failed_files} file issue.")
+                            st.info("अगर data तुरंत न दिखे तो sidebar का Refresh Data दबाएँ, browser hard refresh न करें।")
+                    except Exception as e:
+                        st.error(f"Bulk file read/update error: {e}")
+
+            df_last = df_trips.tail(50).iloc[::-1]
             labels, trip_ids = [], []
-            for _, row in df_edit.iterrows():
+            for _, row in df_last.iterrows():
                 try:
-                    gr_disp = (str(row.iloc[8]).strip()
-                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).strip().lower() not in ["", "nan"]
+                    gr_disp = (str(row.iloc[8])
+                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).lower() != "nan"
                                else "N/A")
-                    trip_disp = str(row.iloc[14]).strip() if len(row) > 14 else "N/A"
-                    labels.append(format_trip_label(row))
-                    trip_ids.append(trip_disp)
-                except Exception:
-                    pass
+                    labels.append(
+                        f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  "
+                        f"📍 {row.iloc[7]}  |  GR: {gr_disp}"
+                    )
+                    trip_ids.append(str(row.iloc[14]))
+                except: pass
 
-            selected_idx = st.selectbox(
+            selected_label = st.selectbox(
                 "✏️ एडिट करने के लिए गाड़ी चुनें:",
-                ["चुनें..."] + list(range(len(labels))),
-                format_func=lambda x: "चुनें..." if x == "चुनें..." else labels[x]
+                ["चुनें..."] + labels
             )
             st.markdown("<hr style='margin:0.5em 0;border-color:#e2e8f0'>",
                         unsafe_allow_html=True)
 
-            if selected_idx != "चुनें...":
-                selected_trip_id = trip_ids[selected_idx]
-                row_data = df_edit[
-                    df_edit.iloc[:, 14].astype(str).str.strip() == selected_trip_id
+            if selected_label != "चुनें...":
+                idx = labels.index(selected_label)
+                selected_trip_id = trip_ids[idx]
+                row_data = df_last[
+                    df_last.iloc[:, 14].astype(str) == selected_trip_id
                 ].iloc[0]
 
                 col_edit, col_gr = st.columns([2.2, 1], gap="small")
@@ -701,7 +877,7 @@ def show_booking_page():
                                         e_date, selected_trip_id, final_gr, e_truck, e_to,
                                         e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt
                                     )
-                                    invalidate_sheet_cache()
+                                    st.cache_data.clear()
                                     st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
                                     time.sleep(1.5)
                                     st.rerun()
@@ -738,49 +914,33 @@ def show_booking_page():
                         """, unsafe_allow_html=True)
 
                     gr_files = st.file_uploader(
-                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"],
+                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png"],
                         accept_multiple_files=True,
                         key=f"gr_up_{selected_trip_id}",
                         label_visibility="collapsed"
                     )
-                    gr_crop_map = {}
                     if gr_files:
                         st.caption(f"📎 {len(gr_files)} फ़ाइल चुनी गई")
-                        gr_crop_map = render_crop_tool(
-                            gr_files,
-                            key_prefix=f"booking_gr_crop_{selected_trip_id}",
-                            title="✂️ GR Crop Tool"
-                        )
 
-                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True, key=f"gr_upload_btn_{selected_trip_id}"):
-                        if not gr_files:
-                            st.warning("⚠️ पहले फ़ाइल चुनें!")
-                        else:
-                            status = st.status("⏳ GR upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
-                            try:
-                                status.write("1/3: A4 full-page PDF बन रही है...")
-                                final_bytes, file_ext = prepare_pod_file(gr_files, gr_crop_map)
-                                if not final_bytes:
-                                    status.update(label="❌ फ़ाइल process नहीं हुई।", state="error")
-                                else:
-                                    status.write("2/3: Google Drive पर upload हो रहा है...")
+                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True):
+                        if gr_files:
+                            with st.spinner("GR (A4 PDF) Drive पर जा रही है..."):
+                                final_bytes, file_ext = prepare_pod_file(gr_files)
+                                if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
-                                    if not d_id:
-                                        status.update(label="❌ Drive upload fail हुआ।", state="error")
-                                    else:
-                                        status.write("3/3: Google Sheet में link save हो रहा है...")
-                                        gr_url = (d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view")
+                                    if d_id:
+                                        gr_url = (d_id if d_id.startswith("http")
+                                                  else f"https://drive.google.com/file/d/{d_id}/view")
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
-                                            invalidate_sheet_cache()
-                                            status.update(label="✅ GR A4 full-page PDF save हो गई।", state="complete")
-                                            st.success("✅ GR सुरक्षित है।")
-                                            time.sleep(1.0)
+                                            st.cache_data.clear()
+                                            st.success("✅ A4 साइज़ GR सेव हो गई!")
+                                            time.sleep(1.5)
                                             st.rerun()
-                                        else:
-                                            status.update(label="❌ Link save fail हुआ।", state="error")
-                            except Exception as exc:
-                                status.update(label=f"❌ Upload error: {exc}", state="error")
+                                        else: st.error("❌ Link save फेल!")
+                                    else: st.error("❌ Drive अपलोड फेल!")
+                                else: st.error("❌ फ़ाइल process नहीं हुई।")
+                        else: st.warning("⚠️ पहले फ़ाइल चुनें!")
                     st.markdown("</div>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════
@@ -885,7 +1045,7 @@ def show_booking_page():
                                 )
                             except: error_count += 1; continue
 
-                    invalidate_sheet_cache()
+                    st.cache_data.clear()
                     if success_count > 0:
                         st.success(f"🎊 {success_count} गाड़ियाँ सफलतापूर्वक सेव हो गईं!")
                     if error_count > 0:

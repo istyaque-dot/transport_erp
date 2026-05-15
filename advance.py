@@ -1,18 +1,28 @@
 import streamlit as st
 import datetime
 import time
+import io
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE 
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+@st.cache_resource(ttl=3000)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=120)
 def get_all_trips():
     try:
         db   = connect_to_sheet()
@@ -22,18 +32,10 @@ def get_all_trips():
         return pd.DataFrame()
 
 def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
-    """Save advance in the 9-column schema used by POD/Reports.
-    Columns: Date, Trip ID, Truck, Cash Amt, Bank Amt, Bank Name, Diesel Amt, Pump Name, Total Amt
-    """
     try:
         db = connect_to_sheet()
-        amt = int(amount)
-        cash_amt = amt if mode == "Cash" else 0
-        bank_amt = amt if mode in ["Canara 311", "Canara 41", "BOB", "Canara 1747"] else 0
-        diesel_amt = amt if mode == "Pump (Shekh Filling)" else 0
-        bank_name = mode if bank_amt else "N/A"
-        pump_name = "Shekh Filling" if diesel_amt else "N/A"
-        row_data = [str(date_val), str(trip_id), str(truck_no), cash_amt, bank_amt, bank_name, diesel_amt, pump_name, amt]
+        # 6 कॉलम के हिसाब से सेट किया गया है: Date, Trip ID, Truck, Mode, Remarks, Amount
+        row_data = [str(date_val), str(trip_id), str(truck_no), str(mode), str(remarks), int(amount)]
         db.worksheet("Advances").append_row(row_data, table_range="A1")
 
         s_map = {
@@ -48,17 +50,258 @@ def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
         if ledger_name:
             if mode == "Canara 1747":
                 db.worksheet(ledger_name).append_row(
-                    [str(date_val), "Advance", f"Truck: {truck_no}", -amt],
+                    [str(date_val), "Advance", f"Truck: {truck_no}", -int(amount)],
                     table_range="A1")
             else:
                 db.worksheet(ledger_name).append_row(
-                    [str(date_val), str(trip_id), "Debit", f"Advance: {truck_no} | {remarks}", -amt],
+                    [str(date_val), "Advance", "Debit",
+                     f"Truck: {truck_no} | {remarks}", -int(amount)],
                     table_range="A1")
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
-    except Exception as e:
-        st.error(f"Advance save error: {e}")
+    except:
         return False
+
+
+
+# ==========================================
+# 📥 BULK ADVANCE UPLOAD HELPERS
+# ==========================================
+
+def _clean_str(v, default=""):
+    try:
+        if pd.isna(v):
+            return default
+    except Exception:
+        pass
+    s = str(v).strip()
+    if s.lower() in ("nan", "none", "nat"):
+        return default
+    return s
+
+def _norm_key(v):
+    s = _clean_str(v, "").upper()
+    # 45.0 -> 45
+    try:
+        if s.endswith('.0') and float(s).is_integer():
+            s = str(int(float(s)))
+    except Exception:
+        pass
+    return ''.join(ch for ch in s if ch.isalnum())
+
+def _clean_amount(v):
+    s = _clean_str(v, "0").replace(',', '').replace('₹', '').strip()
+    try:
+        return int(round(float(s)))
+    except Exception:
+        return 0
+
+def _parse_date(v):
+    if isinstance(v, (datetime.date, datetime.datetime)):
+        return v.strftime('%Y-%m-%d')
+    s = _clean_str(v, "")
+    if not s:
+        return datetime.date.today().strftime('%Y-%m-%d')
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, errors='coerce')
+        if pd.notna(dt):
+            return dt.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return s
+
+def _build_bulk_advance_template():
+    cols = ["GR No", "Payment Date", "Amount", "Mode", "Bank/UTR", "Remark"]
+    sample = pd.DataFrame([
+        {"GR No": "176", "Payment Date": datetime.date.today().strftime('%Y-%m-%d'), "Amount": 49500, "Mode": "Cash", "Bank/UTR": "", "Remark": "Advance paid"},
+        {"GR No": "177", "Payment Date": datetime.date.today().strftime('%Y-%m-%d'), "Amount": 22390, "Mode": "Canara 311", "Bank/UTR": "UTR123", "Remark": "Bank advance"},
+    ], columns=cols)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        pd.DataFrame(columns=cols).to_excel(writer, index=False, sheet_name='BulkAdvance')
+        sample.to_excel(writer, index=False, sheet_name='Sample')
+    return buf.getvalue()
+
+@st.cache_data(ttl=60)
+def get_all_advances():
+    try:
+        db = connect_to_sheet()
+        data = db.worksheet("Advances").get_all_values()
+        if not data:
+            return pd.DataFrame()
+        # Advances sheet often has no header. Keep positional columns.
+        return pd.DataFrame(data[1:] if len(data) > 1 and str(data[0][0]).lower() in ('date','payment date') else data)
+    except Exception:
+        return pd.DataFrame()
+
+def _is_duplicate_advance(df_adv, trip_id, date_str, amount, mode):
+    if df_adv is None or df_adv.empty:
+        return False
+    try:
+        for _, r in df_adv.iterrows():
+            vals = [str(x).strip() for x in list(r.values)]
+            if len(vals) < 6:
+                continue
+            same_trip = _norm_key(vals[1]) == _norm_key(trip_id)
+            same_date = _parse_date(vals[0]) == _parse_date(date_str)
+            same_amt = _clean_amount(vals[5]) == int(amount)
+            same_mode = _norm_key(vals[3]) == _norm_key(mode)
+            if same_trip and same_date and same_amt and same_mode:
+                return True
+    except Exception:
+        return False
+    return False
+
+def save_bulk_advances_to_db(advance_rows):
+    """advance_rows: list of dict(date, trip_id, truck_no, mode, remarks, amount)"""
+    if not advance_rows:
+        return False, "No rows to save"
+    try:
+        db = connect_to_sheet()
+        rows = [[
+            str(r["date"]), str(r["trip_id"]), str(r["truck_no"]),
+            str(r["mode"]), str(r["remarks"]), int(r["amount"])
+        ] for r in advance_rows]
+        db.worksheet("Advances").append_rows(rows, value_input_option="USER_ENTERED", table_range="A1")
+
+        s_map = {
+            "Cash":                 "Cash_Ledger",
+            "Canara 311":           "Canara_311_Ledger",
+            "Canara 41":            "Canara_41_Ledger",
+            "BOB":                  "BOB_Ledger",
+            "Canara 1747":          "canara_1747",
+            "Pump (Shekh Filling)": "Shekh_Filling_Ledger"
+        }
+        ledger_batches = {}
+        for r in advance_rows:
+            mode = str(r["mode"])
+            ledger_name = s_map.get(mode)
+            if not ledger_name:
+                continue
+            if mode == "Canara 1747":
+                ledger_row = [str(r["date"]), "Advance", f"Truck: {r['truck_no']} | GR: {r.get('gr_no','')}", -int(r["amount"])]
+            else:
+                ledger_row = [str(r["date"]), "Advance", "Debit", f"Truck: {r['truck_no']} | GR: {r.get('gr_no','')} | {r['remarks']}", -int(r["amount"])]
+            ledger_batches.setdefault(ledger_name, []).append(ledger_row)
+
+        for ledger_name, batch in ledger_batches.items():
+            try:
+                db.worksheet(ledger_name).append_rows(batch, value_input_option="USER_ENTERED", table_range="A1")
+            except Exception:
+                # Ledger failure should not block main Advance sheet save.
+                pass
+        st.cache_data.clear()
+        return True, f"Saved {len(rows)} advance rows"
+    except Exception as e:
+        return False, str(e)
+
+def _show_bulk_advance_upload(df_trips):
+    st.markdown("### 📥 Bulk Advance Upload")
+    with st.expander("📥 Excel से GR-wise advance payment load करें", expanded=False):
+        cdl, cinf = st.columns([1, 2])
+        with cdl:
+            st.download_button(
+                "⬇️ Bulk Advance Template",
+                data=_build_bulk_advance_template(),
+                file_name="bulk_advance_upload_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        with cinf:
+            st.info("Excel में minimum columns: GR No, Amount. Blank Mode = Cash, Blank Date = आज की date. Save से पहले preview आएगा।")
+
+        bulk_file = st.file_uploader("Bulk Advance Excel/CSV upload करें", type=["xlsx", "xls", "csv"], key="bulk_advance_upload_file")
+        if bulk_file is None:
+            return
+        try:
+            df_bulk = pd.read_csv(bulk_file) if bulk_file.name.lower().endswith('.csv') else pd.read_excel(bulk_file)
+        except Exception as e:
+            st.error(f"File read error: {e}")
+            return
+
+        if df_bulk.empty:
+            st.warning("Excel खाली है।")
+            return
+        if len(df_bulk) > 150:
+            st.warning("एक बार में 100 rows तक recommended है। अभी पहले 100 rows process करें।")
+            df_bulk = df_bulk.head(100)
+
+        df_adv = get_all_advances()
+        preview = []
+        ready_rows = []
+        for i, row in df_bulk.iterrows():
+            gr = _clean_str(row.get("GR No", row.get("GR", "")))
+            amount = _clean_amount(row.get("Amount", row.get("Advance Amount", 0)))
+            pay_date = _parse_date(row.get("Payment Date", row.get("Date", "")))
+            mode = _clean_str(row.get("Mode", row.get("Payment Mode", "Cash")), "Cash")
+            bank = _clean_str(row.get("Bank/UTR", row.get("UTR", row.get("Bank", ""))))
+            remark = _clean_str(row.get("Remark", row.get("Remarks", "")))
+
+            matches = df_trips[df_trips.iloc[:, 8].apply(_norm_key) == _norm_key(gr)] if gr else pd.DataFrame()
+            status = ""
+            trip_id = truck = dest = ""
+            duplicate = False
+            if not gr:
+                status = "❌ GR Missing"
+            elif amount <= 0:
+                status = "❌ Amount Missing/Invalid"
+            elif len(matches) == 0:
+                status = "❌ GR Not Found"
+            elif len(matches) > 1:
+                status = "⚠️ Duplicate GR in Booking"
+            else:
+                m = matches.iloc[0]
+                trip_id = _clean_str(m.iloc[14])
+                truck = _clean_str(m.iloc[6])
+                dest = _clean_str(m.iloc[7])
+                duplicate = _is_duplicate_advance(df_adv, trip_id, pay_date, amount, mode)
+                status = "⚠️ Duplicate Advance" if duplicate else "✅ Ready"
+
+            full_remark = " | ".join([x for x in [f"GR: {gr}", f"Dest: {dest}" if dest else "", bank, remark] if x])
+            preview.append({
+                "Status": status, "GR No": gr, "Date": pay_date, "Amount": amount,
+                "Mode": mode, "Truck": truck, "Destination": dest, "Remark": full_remark
+            })
+            if status == "✅ Ready":
+                ready_rows.append({
+                    "date": pay_date, "trip_id": trip_id, "truck_no": truck, "mode": mode,
+                    "remarks": full_remark, "amount": amount, "gr_no": gr
+                })
+
+        prev_df = pd.DataFrame(preview)
+        st.dataframe(prev_df, use_container_width=True, height=260)
+        ready_count = len(ready_rows)
+        issue_count = len(prev_df) - ready_count
+        c1, c2, c3 = st.columns(3)
+        c1.metric("✅ Ready", ready_count)
+        c2.metric("⚠️ Skip/Issue", issue_count)
+        c3.metric("Total Amount", f"₹{sum(r['amount'] for r in ready_rows):,}")
+
+        if ready_count == 0:
+            st.warning("Save के लिए कोई ready row नहीं है।")
+            return
+        confirm = st.checkbox("Preview check हो गया — सिर्फ ✅ Ready rows save करें", key="bulk_adv_confirm")
+        if st.button("🚀 Confirm & Save Bulk Advance", type="primary", use_container_width=True, disabled=not confirm):
+            progress = st.progress(0, text="Bulk advance save हो रहा है...")
+            saved_total = 0
+            ok_all = True
+            err_msg = ""
+            # 50-50 rows batch to reduce timeout risk.
+            for start in range(0, len(ready_rows), 50):
+                batch = ready_rows[start:start+50]
+                ok, msg = save_bulk_advances_to_db(batch)
+                if ok:
+                    saved_total += len(batch)
+                    progress.progress(min(saved_total / len(ready_rows), 1.0), text=f"Saved {saved_total}/{len(ready_rows)}")
+                else:
+                    ok_all = False
+                    err_msg = msg
+                    break
+            if ok_all:
+                st.success(f"✅ Bulk Advance Complete: {saved_total} rows saved. Total ₹{sum(r['amount'] for r in ready_rows):,}")
+                st.info("Data तुरंत न दिखे तो app के अंदर Refresh Data दबाएँ, browser hard refresh न करें।")
+            else:
+                st.error(f"❌ Bulk save error after {saved_total} rows: {err_msg}")
 
 # ==========================================
 # 🎨 CSS
@@ -237,7 +480,7 @@ def show_advance_page():
     col_r, _ = st.columns([1, 7])
     with col_r:
         if st.button("🔄 Refresh", key="adv_refresh"):
-            invalidate_sheet_cache()
+            st.cache_data.clear()
             st.rerun()
 
     df_trips = get_all_trips()
@@ -246,46 +489,24 @@ def show_advance_page():
         st.info("⚠️ कोई बुकिंग नहीं मिली। पहले 'बुकिंग' पेज से गाड़ी लगाएँ।")
         return
 
-    # ── Trip selector: full list + global search sequence ──
-    df_all = df_trips.copy()
-    if df_all.shape[1] > 14:
-        df_all = df_all[df_all.iloc[:, 14].astype(str).str.strip() != ""]
-    df_all = df_all.iloc[::-1].reset_index(drop=True)
+    # ── Bulk Advance Upload ──
+    _show_bulk_advance_upload(df_trips)
+    st.divider()
 
-    prefill_search = st.session_state.pop("advance_prefill_search", "")
-    prefill_trip_id = st.session_state.pop("advance_prefill_trip_id", "")
-    prefill_notice = st.session_state.pop("advance_prefill_notice", "")
-    if prefill_search:
-        st.session_state["adv_trip_search"] = str(prefill_search).strip()
-    if prefill_notice:
-        st.info(prefill_notice)
-
-    search_text = st.text_input(
-        "🔎 Trip search",
-        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-        key="adv_trip_search"
-    )
-    df_show = filter_trip_dataframe(df_all, search_text)
-    st.caption(f"Dropdown में {len(df_show)} trip(s) loaded | Total bookings: {len(df_all)}")
-
+    # ── Trip selector ──
+    df_last = df_trips.tail(50).iloc[::-1]
     labels, trip_ids, truck_nos = [], [], []
-    for _, row in df_show.iterrows():
-        try:
-            labels.append(format_trip_label(row))
-            trip_ids.append(safe_cell(row, 14, ""))
-            truck_nos.append(safe_cell(row, 6, ""))
-        except Exception:
-            pass
 
-    default_select_index = 0
-    if prefill_trip_id and prefill_trip_id in trip_ids:
-        default_select_index = trip_ids.index(prefill_trip_id) + 1
-    elif str(search_text or "").strip() and len(labels) == 1:
-        default_select_index = 1
+    for _, row in df_last.iterrows():
+        try:
+            labels.append(f"🚛 {row.iloc[6]}  |  📅 {row.iloc[0]}  |  📍 {row.iloc[7]}")
+            trip_ids.append(str(row.iloc[14]))
+            truck_nos.append(str(row.iloc[6]))
+        except:
+            pass
 
     selected_label = st.selectbox(
         "गाड़ी चुनें:", ["चुनें..."] + labels,
-        index=default_select_index,
         label_visibility="collapsed"
     )
 
@@ -298,7 +519,7 @@ def show_advance_page():
     sel_truck_no = truck_nos[idx]
 
     # ── Trip Info Card ──
-    sel_row = df_show[df_show.iloc[:, 14].astype(str) == sel_trip_id].iloc[0]
+    sel_row = df_last[df_last.iloc[:, 14].astype(str) == sel_trip_id].iloc[0]
     try:
         dest      = str(sel_row.iloc[7])
         trip_date = str(sel_row.iloc[0])

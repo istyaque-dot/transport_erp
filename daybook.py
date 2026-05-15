@@ -4,19 +4,31 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache
+@st.cache_resource(ttl=86400)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    # Streamlit secrets से सीधा डिक्शनरी उठाना
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
+    client = gspread.authorize(creds)
+    sheet = client.open("Khan_Transport_ERP")
+    return sheet
 
 def save_daybook_to_db(row_data):
     try:
         db = connect_to_sheet()
         db.worksheet("Day_Book").append_row(row_data, table_range="A1")
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
     except: return False
 
@@ -46,7 +58,7 @@ def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, r
                 # बाकी लेजर्स का 5-कॉलम फॉर्मेट[cite: 1]
                 db.worksheet(s_name).append_row(base_data + [final_amount], table_range="A1")
         
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
     except Exception as e: 
         st.error(f"लेजर अपडेट करने में एरर: {e}")
@@ -59,11 +71,6 @@ def save_daybook_ledgers(date_val, account_name, entry_type, category, amount, r
 def show_daybook_page():
     st.header("📓 अन्य जमा और खर्च (Credit / Debit)")
     st.write("यहाँ आप ऑफिस का खर्चा, मेंटेनेंस, या कोई भी अन्य लेन-देन सेव कर सकते हैं।")
-
-    quick_expense = st.session_state.pop("daybook_quick_expense", False)
-    quick_note = st.session_state.pop("daybook_quick_note", "")
-    if quick_expense or quick_note:
-        st.info(quick_note or "Dashboard से Expense entry mode खोला गया।")
 
     # Session States
     if "db_ck" not in st.session_state: st.session_state.db_ck = 0

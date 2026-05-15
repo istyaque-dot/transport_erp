@@ -3,12 +3,7 @@ pandas
 gspread
 oauth2client
 google-api-python-client
-openpyxl
 xlsxwriter
-requests
-Pillow
-supabase
+openpyxl
 streamlit-cropper
-pillow-heif
-PyMuPDF
-google-cloud-vision
+supabase

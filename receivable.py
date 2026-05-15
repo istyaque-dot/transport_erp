@@ -4,14 +4,22 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE — Google Sheets Connection
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
-from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
+@st.cache_resource(ttl=3000)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
 
 def get_all_trips():
     try:
@@ -27,12 +35,12 @@ def get_all_trips():
 def save_receivable_to_db(row_data):
     try:
         connect_to_sheet().worksheet("Receivables").append_row(row_data, table_range="A1")
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
     except:
         return False
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)
 def get_total_received_for_trip(trip_id):
     """एक ट्रिप के लिए अब तक कितना पेमेंट आया है"""
     try:
@@ -43,7 +51,7 @@ def get_total_received_for_trip(trip_id):
     except:
         return 0
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)
 def get_company_shortage(trip_id):
     """कंपनी की शॉर्टेज (कटौती) निकालना"""
     try:
@@ -70,7 +78,7 @@ def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, recei
         
         if s_name:
             db.worksheet(s_name).append_row(base + [int(received_amt)], table_range="A1")
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
     except:
         return False
@@ -78,36 +86,20 @@ def save_receivable_ledgers(date_val, trip_id, gr_no, comp_name, truck_no, recei
 # ==========================================
 # 🏢 GET COMPANY BALANCE & DOCS LOGIC (पुरानी लिस्ट के लिए)
 # ==========================================
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)
 def get_company_receivable_and_docs():
     try:
         db = connect_to_sheet()
         bk_data = db.worksheet("Bookings").get_all_values()
         owner_data = db.worksheet("Owner_Ledger").get_all_values()
         
-        # सभी POD लिंक निकाल लें — old Owner_Ledger + new Documents sheet formats
+        # सभी POD लिंक निकाल लें
         pod_dict = {}
         if len(owner_data) > 1:
             for r in owner_data[1:]:
-                if len(r) > 1:
+                if len(r) > 4 and "POD Link:" in str(r[4]):
                     trip_id = str(r[1]).strip()
-                    links = extract_pod_links_from_owner_rows([owner_data[0], r], trip_id)
-                    if links:
-                        pod_dict.setdefault(trip_id, [])
-                        for link in links:
-                            if link not in pod_dict[trip_id]:
-                                pod_dict[trip_id].append(link)
-        try:
-            doc_data = db.worksheet("Documents").get_all_values()
-            for item in extract_document_sheet_links(doc_data, None, "POD"):
-                trip_id = str(item.get("trip_id", "")).strip()
-                url = item.get("url")
-                if trip_id and url:
-                    pod_dict.setdefault(trip_id, [])
-                    if url not in pod_dict[trip_id]:
-                        pod_dict[trip_id].append(url)
-        except Exception:
-            pass
+                    pod_dict[trip_id] = str(r[4]).replace("POD Link:", "").strip()
                 
         receivable_list = []
         if len(bk_data) > 1:
@@ -124,17 +116,14 @@ def get_company_receivable_and_docs():
                         except: pass
                     
                     # GR लिंक निकालना
-                    gr_links = extract_links(str(r[16]).strip()) if len(r) > 16 else []
-                    gr_link = gr_links[0] if gr_links else None
-                    pod_links = pod_dict.get(trip_id, [])
-                    pod_link = pod_links[0] if pod_links else None
+                    gr_link = str(r[16]).strip() if len(r) > 16 and "http" in str(r[16]) else None
+                    pod_link = pod_dict.get(trip_id, None)
                     
                     receivable_list.append({
                         "तारीख": str(r[0]),
                         "GR नंबर": str(r[8]),
                         "गाड़ी नंबर": str(r[6]),
                         "कहाँ तक": str(r[7]),
-                        "Trip ID": trip_id,
                         "कंपनी का भाड़ा (₹)": int(comp_freight),
                         "GR (बिल्टी)": gr_link,
                         "POD (रिसीविंग)": pod_link
@@ -180,16 +169,14 @@ def show_receivable_page():
         if df.empty:
             st.info("कोई बुकिंग नहीं मिली। पहले गाड़ी लोड करें।")
         else:
-            # ── Trip Selector: full list + global search sequence ──
-            df_last = df.iloc[::-1].copy().reset_index(drop=True)
-            search_text = st.text_input(
-                "🔎 Trip search",
-                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-                key=f"rec_trip_search_{c}"
+            # ── Trip Selector ──
+            df_last = df.iloc[::-1].copy()
+            df_last['label'] = (
+                "📅 " + df_last.iloc[:, 0].astype(str) + "  |  " +
+                "🚛 " + df_last.iloc[:, 6].astype(str) + "  |  " +
+                "🏢 " + df_last.iloc[:, 2].astype(str) + "  |  " +
+                "📄 GR: " + df_last.iloc[:, 8].astype(str)
             )
-            df_last = filter_trip_dataframe(df_last, search_text)
-            df_last['label'] = df_last.apply(format_trip_label, axis=1)
-            st.caption(f"Dropdown में {len(df_last)} trip(s) loaded")
 
             selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + df_last['label'].tolist(), key=f"sel_rec_{c}", label_visibility="collapsed")
             if selected == "चुनें...":
@@ -277,15 +264,6 @@ def show_receivable_page():
             
             if company_data:
                 df_comp = pd.DataFrame(company_data)
-                search_docs = st.text_input(
-                    "🔎 Data search",
-                    placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-                    key="rec_docs_search"
-                ).strip().lower()
-                if search_docs:
-                    cols = [c for c in ["GR नंबर", "गाड़ी नंबर", "कहाँ तक", "तारीख", "Trip ID"] if c in df_comp.columns]
-                    df_comp = df_comp[df_comp[cols].astype(str).agg(" ".join, axis=1).str.lower().str.contains(search_docs, na=False)]
-                st.caption(f"{len(df_comp)} record(s) found")
                 
                 st.dataframe(
                     df_comp,
@@ -294,7 +272,6 @@ def show_receivable_page():
                         "GR नंबर": st.column_config.TextColumn("GR नंबर", width="small"),
                         "गाड़ी नंबर": st.column_config.TextColumn("गाड़ी नंबर", width="medium"),
                         "कहाँ तक": st.column_config.TextColumn("कहाँ तक", width="medium"),
-                        "Trip ID": st.column_config.TextColumn("Trip ID", width="medium"),
                         "कंपनी का भाड़ा (₹)": st.column_config.NumberColumn("कंपनी भाड़ा (₹)", format="₹%d", width="small"),
                         "GR (बिल्टी)": st.column_config.LinkColumn("📄 GR कॉपी", display_text="📥 Download GR"),
                         "POD (रिसीविंग)": st.column_config.LinkColumn("🏁 POD कॉपी", display_text="📥 Download POD")

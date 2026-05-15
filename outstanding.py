@@ -2,13 +2,22 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE CONNECTION
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+@st.cache_resource
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
 
 def clean_amt(val):
     try:
@@ -24,7 +33,7 @@ def show_outstanding_page():
     st.write("यहाँ आप गाड़ी वालों का बाकी बकाया हिसाब देख सकते हैं।")
 
     if st.button("🔄 डेटा रिफ्रेश करें", type="primary"):
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         st.rerun()
 
     try:
@@ -41,11 +50,9 @@ def show_outstanding_page():
             # 2. एडवांस की मैपिंग
             adv_map = {}
             for r in adv_raw[1:]:
-                if len(r) > 1:
+                if len(r) > 8:
                     tid = str(r[1]).strip()
-                    # New schema: total at index 8. Old schema: amount at index 5.
-                    amt_cell = r[8] if len(r) > 8 else (r[5] if len(r) > 5 else 0)
-                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(amt_cell)
+                    adv_map[tid] = adv_map.get(tid, 0) + clean_amt(r[8])
 
             # 3. लेजर एडजस्टमेंट (Shortage/Extra)
             own_map = {}
@@ -75,10 +82,8 @@ def show_outstanding_page():
                 if balance > 10: # सिर्फ वो गाड़ियाँ जिनका 10 रुपये से ज्यादा बकाया है
                     report_data.append({
                         "तारीख": row.iloc[0],
-                        "GR नंबर": safe_cell(row, 8, "N/A"),
                         "गाड़ी नंबर": truck,
                         "कहाँ तक": row.iloc[7],
-                        "Trip ID": tid,
                         "कुल भाड़ा": f"₹{total_fr:,.0f}",
                         "एडवांस भुगतान": f"₹{paid_adv:,.0f}",
                         "बकाया राशि": balance
@@ -88,16 +93,7 @@ def show_outstanding_page():
             # 5. रिपोर्ट दिखाना
             if report_data:
                 df_final = pd.DataFrame(report_data)
-                search_out = st.text_input(
-                    "🔎 Data search",
-                    placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-                    key="outstanding_search"
-                ).strip().lower()
-                if search_out:
-                    cols = [c for c in ["GR नंबर", "गाड़ी नंबर", "कहाँ तक", "तारीख", "Trip ID"] if c in df_final.columns]
-                    df_final = df_final[df_final[cols].astype(str).agg(" ".join, axis=1).str.lower().str.contains(search_out, na=False)]
                 st.error(f"🔴 कुल मार्केट बकाया: ₹{int(total_pending):,}")
-                st.caption(f"{len(df_final)} record(s) found")
                 
                 # टेबल को स्टाइल करना
                 st.dataframe(

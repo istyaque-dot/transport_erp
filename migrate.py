@@ -2,11 +2,10 @@ import streamlit as st
 from supabase import create_client, Client
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # सुपबेस क्रेडेंशियल्स
-url = str(st.secrets["supabase"]["url"]).strip()
-key = str(st.secrets["supabase"]["key"]).strip()
+url = "https://tsyghmvqrlxwicipkvqw.supabase.co"
+key = "sb_publishable_p0_eR7aMIL5KDvUkiwm18g_t1OtXBDv"
 supabase = create_client(url, key)
 
 def show_migration_page():
@@ -17,7 +16,7 @@ def show_migration_page():
         try:
             # 1. गूगल शीट से जुड़ना
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(st.secrets["gcp_service_account"]) if isinstance(st.secrets["gcp_service_account"], str) else dict(st.secrets["gcp_service_account"]), scope)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets["gcp_service_account"]), scope)
             client = gspread.authorize(creds)
             
             st.write("✅ गूगल शीट से कनेक्शन जुड़ गया।")
@@ -25,7 +24,7 @@ def show_migration_page():
             # 2. शीट खोलना
             sheet = client.open("Khan_Transport_ERP").worksheet("Bookings")
             data = sheet.get_all_values()
-            st.write(f"📊 शीट में कुल {len(data)} लाइनें मिलीं (हेडर समेत)।")
+            st.write(f"📊 शीट में कुल {len(data)} लाइनें मिलीं (हेडर समेत)।")[cite: 1]
 
             if len(data) <= 1:
                 st.error("❌ शीट खाली दिख रही है!")

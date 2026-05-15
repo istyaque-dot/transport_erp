@@ -3,16 +3,24 @@ import pandas as pd
 import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE FUNCTIONS
 # ==========================================
 
-from sheet_utils import connect_to_sheet, format_trip_label, filter_trip_dataframe, safe_cell, trip_matches
-from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
+@st.cache_resource(ttl=86400)
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("Khan_Transport_ERP")
 
-@st.cache_data(ttl=600) 
+@st.cache_data(ttl=5) 
 def get_sheet_data_for_reports(sheet_name):
     try:
         db = connect_to_sheet()
@@ -76,21 +84,13 @@ def show_reports_page():
         st.markdown("### 🚚 गाड़ी का पक्का हिसाब")
         all_bk = get_sheet_data_for_reports("Bookings")
         if len(all_bk) > 1:
-            data_bk = [r for r in all_bk[1:][::-1] if len(r) > 14]
-            search_text = st.text_input(
-                "🔎 Trip search",
-                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-                key="reports_trip_search"
-            )
-            if search_text:
-                data_bk = [r for r in data_bk if trip_matches(r, search_text)]
-            st.caption(f"Dropdown में {len(data_bk)} trip(s) loaded")
-            trip_options = [format_trip_label(r) for r in data_bk]
+            data_bk = all_bk[1:][::-1]
+            trip_options = [f"🚛 {r[6]} | GR: {r[8]} | ID: {r[14]}" for r in data_bk if len(r) > 14]
             selected = st.selectbox("गाड़ी खोजें:", ["चुनें..."] + trip_options)
             
             if selected != "चुनें...":
                 sel_id = selected.split("ID: ")[1].strip()
-                trip_row = [r for r in data_bk if len(r) > 14 and str(r[14]).strip() == sel_id][0]
+                trip_row = [r for r in data_bk if len(r) > 14 and r[14] == sel_id][0]
                 
                 # भाड़ा और मुंशीयाना कैलकुलेशन
                 owner_freight = int(float(str(trip_row[12]).replace(',', '') or 0))
@@ -98,34 +98,17 @@ def show_reports_page():
                 
                 # एडवांस का विवरण निकालना
                 all_adv = get_sheet_data_for_reports("Advances")
-                def adv_amount(row):
-                    try:
-                        if len(row) > 8:
-                            return int(float(str(row[8]).replace(',', '') or 0))
-                        if len(row) > 5:
-                            return int(float(str(row[5]).replace(',', '') or 0))
-                    except Exception:
-                        return 0
-                    return 0
-                total_adv = sum(adv_amount(r) for r in all_adv[1:] if len(r) > 1 and r[1].strip() == sel_id)
+                total_adv = sum(int(float(str(r[8]).replace(',', '') or 0)) for r in all_adv[1:] if len(r) > 8 and r[1].strip() == sel_id)
 
                 # फाइनल पेमेंट और POD लिंक
                 all_bal = get_sheet_data_for_reports("Owner_Ledger")
-                total_bal_paid, pod_links = 0, []
+                total_bal_paid, pod_link = 0, ""
                 if all_bal:
-                    pod_links.extend(extract_pod_links_from_owner_rows(all_bal, sel_id))
                     for r in all_bal[1:]:
                         if len(r) > 5 and r[1].strip() == sel_id:
+                            if "POD Link:" in str(r[4]): pod_link = str(r[4]).replace("POD Link:", "").strip()
                             if any(k in str(r[4]) for k in ["Final Balance", "Shortage", "Extra"]):
                                 total_bal_paid += int(float(str(r[5]).replace(',', '') or 0))
-                try:
-                    doc_rows = get_sheet_data_for_reports("Documents")
-                    for item in extract_document_sheet_links(doc_rows, sel_id, "POD"):
-                        url = item.get("url")
-                        if url and url not in pod_links:
-                            pod_links.append(url)
-                except Exception:
-                    pass
                 
                 total_bal_paid = abs(total_bal_paid)
                 rem_balance = (owner_freight - munshiyana) - total_adv - total_bal_paid
@@ -137,9 +120,7 @@ def show_reports_page():
                 c3.metric("कुल एडवांस", f"₹{total_adv:,}")
                 c4.metric("बाकी बकाया", f"₹{rem_balance:,}")
 
-                if pod_links:
-                    for i, pod_link in enumerate(pod_links, start=1):
-                        st.link_button(f"🏁 POD (रिसीविंग) कॉपी {i} देखें", pod_link, use_container_width=True)
+                if pod_link: st.link_button("🏁 POD (रिसीविंग) कॉपी देखें", pod_link, use_container_width=True)
 
     # --- TAB 4: आज का काम ---
     with tab4:
@@ -150,13 +131,8 @@ def show_reports_page():
         st.subheader("🚛 आज दिए गए एडवांस")
         all_adv = get_sheet_data_for_reports("Advances")
         if all_adv:
-            today_adv = [r for r in all_adv[1:] if len(r) > 0 and r[0] == s_date]
-            if today_adv:
-                max_cols = max(len(r) for r in today_adv)
-                norm_rows = [r + [""] * (max_cols - len(r)) for r in today_adv]
-                df_today_adv = pd.DataFrame(norm_rows)
-                show_cols = [i for i in [2, 3, 4, 5, 6, 7, 8] if i < df_today_adv.shape[1]]
-                st.table(df_today_adv.iloc[:, show_cols])
+            today_adv = [r for r in all_adv[1:] if len(r) > 8 and r[0] == s_date]
+            if today_adv: st.table(pd.DataFrame(today_adv).iloc[:, [2, 3, 5, 6, 8]])
             else: st.info("आज कोई एडवांस नहीं दिया गया।")
 
     # --- TAB 5: आज की पेमेंट्स (Cash Flow) ---
@@ -179,41 +155,12 @@ def show_reports_page():
     # --- TAB 6: डॉक्यूमेंट प्रिंट ---
     with tab6:
         st.markdown("### 🖨️ डॉक्यूमेंट प्रिंट (GR और POD)")
-        search_gr = st.text_input("🔍 Search", placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID")
+        search_gr = st.text_input("🔍 GR नंबर टाइप करें:")
         if search_gr:
             all_bk = get_sheet_data_for_reports("Bookings")
-            matches = [r for r in all_bk[1:] if len(r) > 14 and trip_matches(r, search_gr)]
-            if matches:
-                st.caption(f"{len(matches)} record(s) found")
-                labels = [format_trip_label(r) for r in matches]
-                selected_doc = st.selectbox("रिकॉर्ड चुनें", ["चुनें..."] + labels, key="doc_print_select")
-                if selected_doc != "चुनें...":
-                    sel_id = selected_doc.split("ID: ")[1].strip()
-                    found = next((r for r in matches if len(r) > 14 and str(r[14]).strip() == sel_id), None)
-                    if found:
-                        st.success(f"गाड़ी {found[6]} का डेटा मिल गया!")
-                        gr_links = extract_links(found[16]) if len(found) > 16 else []
-                        if gr_links:
-                            for i, link in enumerate(gr_links, start=1):
-                                st.link_button(f"📄 GR {i} प्रिंट/डाउनलोड करें", link, type="primary")
-                        else:
-                            st.warning("इस रिकॉर्ड में GR link नहीं है।")
-
-                        pod_links = []
-                        all_bal = get_sheet_data_for_reports("Owner_Ledger")
-                        if all_bal:
-                            pod_links.extend(extract_pod_links_from_owner_rows(all_bal, sel_id))
-                        try:
-                            doc_rows = get_sheet_data_for_reports("Documents")
-                            for item in extract_document_sheet_links(doc_rows, sel_id, "POD"):
-                                url = item.get("url")
-                                if url and url not in pod_links:
-                                    pod_links.append(url)
-                        except Exception:
-                            pass
-                        if pod_links:
-                            for i, link in enumerate(pod_links, start=1):
-                                st.link_button(f"🏁 POD {i} प्रिंट/डाउनलोड करें", link, type="secondary")
-                        else:
-                            st.info("इस रिकॉर्ड में POD link नहीं है।")
-            else: st.error("Data नहीं मिला।")
+            found = next((r for r in all_bk[1:] if len(r) > 8 and str(r[8]).strip() == search_gr.strip()), None)
+            if found:
+                st.success(f"गाड़ी {found[6]} का डेटा मिल गया!")
+                if len(found) > 16 and "http" in str(found[16]):
+                    st.link_button("📄 GR प्रिंट करें", found[16].strip(), type="primary")
+            else: st.error("GR नहीं मिली।")

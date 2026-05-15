@@ -4,23 +4,30 @@ import time
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ==========================================
 # 🗄️ DATABASE
 # ==========================================
 
-from sheet_utils import connect_to_sheet, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
-from doc_link_utils import extract_pod_links_from_owner_rows, extract_document_sheet_links, extract_links
+@st.cache_resource
+def connect_to_sheet():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        dict(st.secrets["gcp_service_account"]), scope)
+    return gspread.authorize(creds).open("Khan_Transport_ERP")
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=120)
 def get_all_trips():
     try:
         data = connect_to_sheet().worksheet("Bookings").get_all_values()
         return pd.DataFrame(data[1:], columns=data[0]) if len(data) > 1 else pd.DataFrame()
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60)
 def get_company_balance_details(trip_id):
     try:
         data  = connect_to_sheet().worksheet("Company_Ledger").get_all_values()
@@ -32,28 +39,16 @@ def get_company_balance_details(trip_id):
         return total
     except: return 0
 
-@st.cache_data(ttl=600)
-def get_pod_links(trip_id):
-    """Support old Owner_Ledger POD links and new Documents sheet links."""
-    links = []
-    try:
-        owner_data = connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
-        links.extend(extract_pod_links_from_owner_rows(owner_data, str(trip_id).strip()))
-    except Exception:
-        pass
-    try:
-        doc_data = connect_to_sheet().worksheet("Documents").get_all_values()
-        for item in extract_document_sheet_links(doc_data, str(trip_id).strip(), "POD"):
-            url = item.get("url")
-            if url and url not in links:
-                links.append(url)
-    except Exception:
-        pass
-    return links
-
+@st.cache_data(ttl=60)
 def get_pod_link(trip_id):
-    links = get_pod_links(trip_id)
-    return links[0] if links else None
+    try:
+        data = connect_to_sheet().worksheet("Owner_Ledger").get_all_values()
+        for row in data[1:]:
+            if len(row) > 4 and str(row[1]).strip() == str(trip_id).strip():
+                if "POD Link:" in str(row[4]):
+                    return str(row[4]).replace("POD Link:", "").strip()
+        return None
+    except: return None
 
 def save_company_payment(date_val, trip_id, gr_no, truck_no,
                          pay_received, bank_name, shortage, tds, extra_km, remarks):
@@ -87,7 +82,7 @@ def save_company_payment(date_val, trip_id, gr_no, truck_no,
                         [str(date_val), trip_id, gr_no,
                          f"Comp Pay: {truck_no} | {remarks}", int(pay_received)],
                         table_range="A1")
-        invalidate_sheet_cache()
+        st.cache_data.clear()
         return True
     except: return False
 
@@ -239,36 +234,30 @@ def show_company_page():
     with h1: st.header("🏢 कंपनी खाता और सेटलमेंट")
     with h2:
         if st.button("🔄 Refresh", type="primary", use_container_width=True):
-            invalidate_sheet_cache(); st.rerun()
+            st.cache_data.clear(); st.rerun()
 
     df_trips = get_all_trips()
     if df_trips.empty:
         st.info("कोई डेटा नहीं मिला।"); return
 
-    # ── Trip Selector: full list + global search sequence ──
-    df_last = df_trips.iloc[::-1].reset_index(drop=True)
-    search_text = st.text_input(
-        "🔎 Trip search",
-        placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list",
-        key="company_trip_search"
-    )
-    df_last = filter_trip_dataframe(df_last, search_text)
-    st.caption(f"Dropdown में {len(df_last)} trip(s) loaded | Total bookings: {len(df_trips)}")
-
+    # ── Trip Selector ──
+    df_last = df_trips.tail(150).iloc[::-1]
     labels, trip_ids = [], []
     for _, row in df_last.iterrows():
         try:
-            labels.append(format_trip_label(row))
-            trip_ids.append(safe_cell(row, 14, ""))
-        except Exception:
-            pass
+            gr = str(row.iloc[8]) if str(row.iloc[8]).lower() not in ("nan","") else "—"
+            labels.append(
+                f"🚛 {row.iloc[6]}  |  📅 {str(row.iloc[0])[:10]}  |  "
+                f"📍 {row.iloc[7]}  |  GR: {gr}")
+            trip_ids.append(str(row.iloc[14]))
+        except: pass
 
     selected = st.selectbox(
         "गाड़ी खोजें:", ["चुनें..."] + labels,
         label_visibility="collapsed")
 
     if selected == "चुनें...":
-        st.caption("👆 GR / गाड़ी नंबर / Destination / Date / Trip ID से search करें।")
+        st.caption("👆 GR नंबर, गाड़ी नंबर या कंपनी का नाम टाइप करके खोजें।")
         return
 
     idx      = labels.index(selected)
@@ -296,25 +285,23 @@ def show_company_page():
     """, unsafe_allow_html=True)
 
     # ── Documents ──
-    gr_links = extract_links(row_data.iloc[16]) if len(row_data) > 16 and pd.notna(row_data.iloc[16]) else []
-    gr_link = gr_links[0] if gr_links else None
-    pod_links = get_pod_links(trip_id)
-    pod_link = pod_links[0] if pod_links else None
+    gr_link = None
+    if len(row_data) > 16 and pd.notna(row_data.iloc[16]) and "http" in str(row_data.iloc[16]):
+        gr_link = str(row_data.iloc[16]).strip()
+    pod_link = get_pod_link(trip_id)
 
     st.markdown("<div class='pill'>📄 डॉक्यूमेंट्स</div>", unsafe_allow_html=True)
     dc1, dc2 = st.columns(2)
     with dc1:
-        if gr_links:
+        if gr_link:
             st.markdown("<div class='doc-ok'>✅ GR (बिल्टी) अपलोड है</div>", unsafe_allow_html=True)
-            for i, link in enumerate(gr_links, start=1):
-                st.link_button(f"📄 GR {i} देखें", link, use_container_width=True)
+            st.link_button("📄 GR देखें", gr_link, use_container_width=True)
         else:
             st.markdown("<div class='doc-miss'>⚠️ GR अभी अपलोड नहीं</div>", unsafe_allow_html=True)
     with dc2:
-        if pod_links:
+        if pod_link:
             st.markdown("<div class='doc-ok'>✅ POD (रिसीविंग) अपलोड है</div>", unsafe_allow_html=True)
-            for i, link in enumerate(pod_links, start=1):
-                st.link_button(f"🏁 POD {i} देखें", link, use_container_width=True)
+            st.link_button("🏁 POD देखें", pod_link, use_container_width=True)
         else:
             st.markdown("<div class='doc-miss'>⚠️ POD अभी अपलोड नहीं</div>", unsafe_allow_html=True)
 
@@ -417,7 +404,7 @@ def show_company_page():
                         str(datetime.date.today()), trip_id,
                         gr_no, truck_no, pay_rec, bank,
                         shortage, tds, extra, remark):
-                        invalidate_sheet_cache()
+                        st.cache_data.clear()
                         st.success("✅ कंपनी खाता अपडेट हो गया!")
                         time.sleep(1.5); st.rerun()
                     else:
