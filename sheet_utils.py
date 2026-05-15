@@ -1,8 +1,5 @@
 import json
 import time
-import os
-import pickle
-from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
@@ -20,12 +17,7 @@ SCOPE = [
 
 # Keep read cache longer to avoid Google Sheets per-minute read quota errors.
 # Manual Refresh / successful write will invalidate this cache.
-SHEET_READ_TTL_SECONDS = 900
-
-# Local /tmp cache reduces repeated Google Sheet bulk reads after reruns.
-# It is safe for Streamlit Cloud because /tmp is instance-local and auto-clears on restart.
-CACHE_DIR = Path(os.environ.get("TRANSPORT_CACHE_DIR", "/tmp/transport_erp_cache"))
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+SHEET_READ_TTL_SECONDS = 600
 
 REQUIRED_SHEETS = {
     "Bookings": [
@@ -79,61 +71,8 @@ def _raw_worksheet(sheet_name: str):
     return _raw_spreadsheet().worksheet(sheet_name)
 
 
-def _cache_version(sheet_name: str | None = None) -> int:
-    """Version number used by cached sheet reads.
-
-    Each sheet has an independent version. This prevents one write, such as a
-    POD upload, from forcing Bookings/Reports/Other sheets to reload.
-    """
-    global_v = int(st.session_state.get("_sheet_cache_global_version", 0))
-    if not sheet_name:
-        return global_v
-    versions = st.session_state.setdefault("_sheet_cache_versions", {})
-    return global_v + int(versions.get(sheet_name, 0))
-
-
-def _safe_cache_name(sheet_name: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(sheet_name))
-
-
-def _disk_cache_path(sheet_name: str) -> Path:
-    return CACHE_DIR / f"{_safe_cache_name(sheet_name)}.pkl"
-
-
-def _load_disk_cache(sheet_name: str) -> list[list[Any]] | None:
-    path = _disk_cache_path(sheet_name)
-    try:
-        if not path.exists():
-            return None
-        if time.time() - path.stat().st_mtime > SHEET_READ_TTL_SECONDS:
-            return None
-        with path.open("rb") as f:
-            values = pickle.load(f)
-        if isinstance(values, list):
-            return values
-    except Exception:
-        return None
-    return None
-
-
-def _save_disk_cache(sheet_name: str, values: list[list[Any]]) -> None:
-    try:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with _disk_cache_path(sheet_name).open("wb") as f:
-            pickle.dump(values, f, protocol=pickle.HIGHEST_PROTOCOL)
-    except Exception:
-        pass
-
-
-def _clear_disk_cache(sheet_name: str | None = None) -> None:
-    try:
-        if sheet_name:
-            _disk_cache_path(sheet_name).unlink(missing_ok=True)
-            return
-        for file in CACHE_DIR.glob("*.pkl"):
-            file.unlink(missing_ok=True)
-    except Exception:
-        pass
+def _cache_version() -> int:
+    return int(st.session_state.get("_sheet_cache_version", 0))
 
 
 def _remember_last_good(sheet_name: str, values: list[list[Any]]) -> None:
@@ -152,15 +91,8 @@ def _last_good(sheet_name: str) -> list[list[Any]]:
 
 @st.cache_data(ttl=SHEET_READ_TTL_SECONDS, show_spinner=False)
 def _cached_values_from_api(sheet_name: str, version: int) -> list[list[Any]]:
-    # 1) Try fast local /tmp cache first.
-    disk_values = _load_disk_cache(sheet_name)
-    if disk_values is not None:
-        return disk_values
-
-    # 2) Only then hit Google Sheets API.
-    values = _raw_worksheet(sheet_name).get_all_values()
-    _save_disk_cache(sheet_name, values)
-    return values
+    # One real Google Sheets read per sheet per TTL/version.
+    return _raw_worksheet(sheet_name).get_all_values()
 
 
 def _quota_message(exc: Exception) -> str:
@@ -173,35 +105,12 @@ def _quota_message(exc: Exception) -> str:
     return text
 
 
-def invalidate_sheet_cache(sheet_name: str | None = None) -> None:
-    """Invalidate cached sheet data.
-
-    - `invalidate_sheet_cache("Bookings")` clears only that sheet.
-    - `invalidate_sheet_cache()` is kept for old code/manual refresh. If it is
-      called immediately after a sheet-specific write, it is skipped to avoid
-      clearing every sheet repeatedly.
-    """
-    now = time.time()
-
-    if sheet_name:
-        versions = st.session_state.setdefault("_sheet_cache_versions", {})
-        versions[sheet_name] = int(versions.get(sheet_name, 0)) + 1
-        st.session_state["_last_specific_sheet_invalidate_ts"] = now
-        _clear_disk_cache(sheet_name)
-        return
-
-    # Many save functions call invalidate_sheet_cache() after the wrapper has
-    # already invalidated the exact written sheet. Do not turn that into a full
-    # app-wide cache wipe. Manual Refresh still works because it is not preceded
-    # by a write-specific invalidation.
-    last_specific = float(st.session_state.get("_last_specific_sheet_invalidate_ts", 0) or 0)
-    if now - last_specific < 2.0:
-        return
-
-    st.session_state["_sheet_cache_global_version"] = _cache_version() + 1
-    st.session_state["_sheet_cache_versions"] = {}
-    _clear_disk_cache(None)
+def invalidate_sheet_cache() -> None:
+    """Call after writes or manual refresh. Avoid direct st.cache_data.clear() in pages."""
+    st.session_state["_sheet_cache_version"] = _cache_version() + 1
     try:
+        # Clear cached data functions in app-level pages and central sheet cache.
+        # This is intentionally triggered only on write/manual refresh, not on normal navigation.
         st.cache_data.clear()
     except Exception:
         pass
@@ -227,7 +136,7 @@ class CachedWorksheet:
                 st.warning(_quota_message(exc))
                 return _last_good(self.sheet_name)
         try:
-            values = _cached_values_from_api(self.sheet_name, _cache_version(self.sheet_name))
+            values = _cached_values_from_api(self.sheet_name, _cache_version())
             _remember_last_good(self.sheet_name, values)
             return values
         except Exception as exc:
@@ -263,32 +172,32 @@ class CachedWorksheet:
 
     def append_row(self, *args, **kwargs):
         result = self._ws.append_row(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def append_rows(self, *args, **kwargs):
         result = self._ws.append_rows(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def update(self, *args, **kwargs):
         result = self._ws.update(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def update_cell(self, *args, **kwargs):
         result = self._ws.update_cell(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def batch_update(self, *args, **kwargs):
         result = self._ws.batch_update(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def clear(self, *args, **kwargs):
         result = self._ws.clear(*args, **kwargs)
-        invalidate_sheet_cache(self.sheet_name)
+        invalidate_sheet_cache()
         return result
 
     def __getattr__(self, item):
