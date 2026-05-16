@@ -1,35 +1,6 @@
 import datetime
-import sys
 import streamlit as st
-
-try:
-    from auth_utils import login_user, logout_user, restore_login_from_cookie
-except Exception:
-    login_user = logout_user = restore_login_from_cookie = None
-
-# FORCE UNINSTALL old global button guard if Streamlit process reused old module.
-# Old action_guard monkey-patched st.button and caused: "Processing... duplicate click blocked".
-_old_guard = sys.modules.get("action_guard")
-if _old_guard is not None:
-    try:
-        _orig_btn = getattr(_old_guard, "_ORIGINAL_BUTTON", None)
-        _orig_form = getattr(_old_guard, "_ORIGINAL_FORM_SUBMIT_BUTTON", None)
-        if _orig_btn is not None:
-            st.button = _orig_btn
-        if _orig_form is not None:
-            st.form_submit_button = _orig_form
-        setattr(_old_guard, "_INSTALLED", False)
-    except Exception:
-        pass
-
-# Clear old lock keys on every run so upload/save buttons do not remain stuck.
-for _k in list(st.session_state.keys()):
-    _lk = str(_k).lower()
-    if str(_k).startswith("_guard_") or "saving_lock" in _lk or "upload_lock" in _lk or "button_lock" in _lk:
-        try:
-            del st.session_state[_k]
-        except Exception:
-            pass
+from auth_utils import make_auth_token, validate_auth_token, read_auth_token_from_url, set_auth_token_in_url, clear_auth_token_from_url
 
 st.set_page_config(page_title="Transport ERP", page_icon="🚛", layout="wide")
 
@@ -69,18 +40,16 @@ st.markdown("""
 
 
 def check_password():
-    # 1) Normal Streamlit session login
     if st.session_state.get("password_correct", False):
         return True
 
-    # 2) Hard refresh / browser reload login restore
-    # This uses auth_utils.py cookie/query-token logic. If package is missing, app still shows login.
-    if restore_login_from_cookie is not None:
-        try:
-            if restore_login_from_cookie():
-                return True
-        except Exception:
-            pass
+    # Hard refresh/session reset ke baad URL auth token se auto-login.
+    token = read_auth_token_from_url()
+    ok, username = validate_auth_token(token)
+    if ok:
+        st.session_state["password_correct"] = True
+        st.session_state["logged_user"] = username or "admin"
+        return True
 
     st.markdown(
         "<div style='text-align:center; padding-top:10vh;'><div style='font-size:4rem;'>🚛</div>"
@@ -95,13 +64,11 @@ def check_password():
             remember = st.checkbox("Login याद रखें", value=True)
             if st.form_submit_button("🚀 Login करें", use_container_width=True):
                 if u == "admin" and p == "khan786":
-                    if login_user is not None:
-                        try:
-                            login_user("admin", remember=remember, days=30)
-                        except Exception:
-                            st.session_state["password_correct"] = True
-                    else:
-                        st.session_state["password_correct"] = True
+                    st.session_state["password_correct"] = True
+                    st.session_state["logged_user"] = u
+                    if remember:
+                        token = make_auth_token(u)
+                        set_auth_token_in_url(token)
                     st.rerun()
                 else:
                     st.error("❌ गलत यूजरनाम या पासवर्ड")
@@ -138,8 +105,8 @@ def show_home_page():
         if st.button("📝 New Booking", use_container_width=True):
             go_to_page("📝 Booking")
             st.rerun()
-        if st.button("📸 Quick POD Upload", use_container_width=True):
-            go_to_page("📸 Quick POD Upload")
+        if st.button("📤 POD / GR Upload", use_container_width=True):
+            go_to_page("📤 Docs Upload")
             st.rerun()
     with q2:
         if st.button("💸 Advance Entry", use_container_width=True):
@@ -171,28 +138,16 @@ def show_home_page():
 if check_password():
     st.sidebar.title("🚛 ERP Menu")
     if st.sidebar.button("🚪 Logout"):
-        if logout_user is not None:
-            try:
-                logout_user()
-            except Exception:
-                st.session_state["password_correct"] = False
-        else:
-            st.session_state["password_correct"] = False
+        st.session_state["password_correct"] = False
+        st.session_state.pop("logged_user", None)
+        clear_auth_token_from_url()
         st.rerun()
-
-    with st.sidebar.expander("⚙️ Safety", expanded=False):
-        if st.button("🔓 Button/Upload Lock Reset", use_container_width=True):
-            for k in list(st.session_state.keys()):
-                if str(k).startswith("_guard_") or "saving_lock" in str(k).lower() or "upload_lock" in str(k).lower():
-                    del st.session_state[k]
-            st.success("Locks reset हो गए।")
 
     PAGES = {
         "🏠 Home": (show_home_page, None),
         "📝 Booking": ("booking", "show_booking_page"),
         "💸 Advance": ("advance", "show_advance_page"),
         "🏁 POD": ("pod", "show_pod_page"),
-        "📸 Quick POD Upload": ("quick_pod_upload", "show_quick_pod_upload_page"),
         "📤 Docs Upload": ("documents", "show_documents_upload_page"),
         "📥 Receivable": ("receivable", "show_receivable_page"),
         "💸 Outstanding": ("outstanding", "show_outstanding_page"),

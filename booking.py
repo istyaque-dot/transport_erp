@@ -6,7 +6,6 @@ import requests
 import base64
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
-from a4_pdf_utils import build_a4_full_pdf_from_uploads
 import io
 import json
 import gspread
@@ -41,23 +40,41 @@ def upload_to_drive(file_bytes, file_name):
         return result if "Error" not in result else None
     except: return None
 
-# 🟢 A4 FULL-PAGE PDF LOGIC
+# 🟢 A4 SIZE PDF LOGIC
 def prepare_pod_file(uploaded_files, crop_map=None):
-    """Return print-ready A4 PDF bytes for GR/POD uploads.
-
-    Fixes the issue where a GR/POD copy is pasted small in the centre of an A4 page.
-    Images and already-made PDFs are auto-cropped for white margins and then fitted
-    to A4 at maximum size without stretching or cutting.
-    """
-    if not uploaded_files:
-        return None, None
-    final_pdf = build_a4_full_pdf_from_uploads(
-        list(uploaded_files),
-        crop_map=crop_map or {},
-        get_processed_image_func=get_processed_image,
-        get_processed_pdf_func=get_processed_pdf_bytes,
-    )
-    return (final_pdf, "pdf") if final_pdf else (None, None)
+    if not uploaded_files: return None, None
+    if len(uploaded_files) == 1 and uploaded_files[0].name.lower().endswith(".pdf"):
+        return get_processed_pdf_bytes(uploaded_files[0], crop_map=crop_map, index=0), "pdf"
+        
+    A4_WIDTH = 2480
+    A4_HEIGHT = 3508
+    
+    a4_images = []
+    for index, file in enumerate(uploaded_files):
+        if file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")):
+            img = get_processed_image(file, crop_map, index)
+            
+            try:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.Resampling.LANCZOS)
+            except AttributeError:
+                img.thumbnail((A4_WIDTH, A4_HEIGHT), Image.LANCZOS)
+            
+            a4_canvas = Image.new('RGB', (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
+            
+            x_offset = (A4_WIDTH - img.width) // 2
+            y_offset = (A4_HEIGHT - img.height) // 2
+            a4_canvas.paste(img, (x_offset, y_offset))
+            
+            a4_images.append(a4_canvas)
+            
+    if a4_images:
+        pdf_bytes = io.BytesIO()
+        if len(a4_images) == 1: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300)
+        else: 
+            a4_images[0].save(pdf_bytes, format="PDF", resolution=300, save_all=True, append_images=a4_images[1:])
+        return pdf_bytes.getvalue(), "pdf"
+    return None, None
 
 def save_gr_link_to_db(trip_id, gr_url):
     try:
@@ -752,35 +769,25 @@ def show_booking_page():
                             title="✂️ GR Crop Tool"
                         )
 
-                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True, key=f"gr_upload_btn_{selected_trip_id}"):
-                        if not gr_files:
-                            st.warning("⚠️ पहले फ़ाइल चुनें!")
-                        else:
-                            status = st.status("⏳ GR upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
-                            try:
-                                status.write("1/3: A4 full-page PDF बन रही है...")
+                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True):
+                        if gr_files:
+                            with st.spinner("GR (A4 PDF) Drive पर जा रही है..."):
                                 final_bytes, file_ext = prepare_pod_file(gr_files, gr_crop_map)
-                                if not final_bytes:
-                                    status.update(label="❌ फ़ाइल process नहीं हुई।", state="error")
-                                else:
-                                    status.write("2/3: Google Drive पर upload हो रहा है...")
+                                if final_bytes:
                                     f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
                                     d_id = upload_to_drive(final_bytes, f_name)
-                                    if not d_id:
-                                        status.update(label="❌ Drive upload fail हुआ।", state="error")
-                                    else:
-                                        status.write("3/3: Google Sheet में link save हो रहा है...")
-                                        gr_url = (d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view")
+                                    if d_id:
+                                        gr_url = (d_id if d_id.startswith("http")
+                                                  else f"https://drive.google.com/file/d/{d_id}/view")
                                         if save_gr_link_to_db(selected_trip_id, gr_url):
                                             invalidate_sheet_cache()
-                                            status.update(label="✅ GR A4 full-page PDF save हो गई।", state="complete")
-                                            st.success("✅ GR सुरक्षित है।")
-                                            time.sleep(1.0)
+                                            st.success("✅ A4 साइज़ GR सेव हो गई!")
+                                            time.sleep(1.5)
                                             st.rerun()
-                                        else:
-                                            status.update(label="❌ Link save fail हुआ।", state="error")
-                            except Exception as exc:
-                                status.update(label=f"❌ Upload error: {exc}", state="error")
+                                        else: st.error("❌ Link save फेल!")
+                                    else: st.error("❌ Drive अपलोड फेल!")
+                                else: st.error("❌ फ़ाइल process नहीं हुई।")
+                        else: st.warning("⚠️ पहले फ़ाइल चुनें!")
                     st.markdown("</div>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════

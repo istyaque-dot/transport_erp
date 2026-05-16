@@ -11,4 +11,3 @@ supabase
 streamlit-cropper
 pillow-heif
 PyMuPDF
-extra-streamlit-components

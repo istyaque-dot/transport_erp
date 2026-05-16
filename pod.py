@@ -8,7 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
-from a4_pdf_utils import build_a4_full_pdf_from_uploads
 from doc_link_utils import extract_pod_links_from_owner_rows
 import io
 import json
@@ -163,13 +162,17 @@ def image_to_a4(img: Image.Image) -> Image.Image:
     return canvas
 
 def build_a4_pdf(image_files, crop_map=None) -> bytes | None:
-    """Build print-ready A4 full-page PDF from POD/GR uploads."""
-    return build_a4_full_pdf_from_uploads(
-        list(image_files or []),
-        crop_map=crop_map or {},
-        get_processed_image_func=get_processed_image,
-        get_processed_pdf_func=get_processed_pdf_bytes,
-    )
+    if len(image_files) == 1 and image_files[0].name.lower().endswith(".pdf"):
+        return get_processed_pdf_bytes(image_files[0], crop_map=crop_map, index=0)
+    a4_pages = []
+    for index, file in enumerate(image_files):
+        if not file.name.lower().endswith((".jpg", ".jpeg", ".png", ".heic", ".heif")): continue
+        img = get_processed_image(file, crop_map, index)
+        a4_pages.append(image_to_a4(img))
+    if not a4_pages: return None
+    pdf_bytes = io.BytesIO()
+    a4_pages[0].save(pdf_bytes, format="PDF", resolution=150, save_all=True, append_images=a4_pages[1:]) if len(a4_pages) > 1 else a4_pages[0].save(pdf_bytes, format="PDF", resolution=150)
+    return pdf_bytes.getvalue()
 
 # ==========================================
 # 📤 DRIVE & LEDGER FUNCTIONS
@@ -186,29 +189,18 @@ def upload_to_drive(file_bytes, file_name):
     except: return None
 
 def save_pod_to_drive(db, gr_no, truck_no, trip_id, up_files, crop_map=None):
-    status = st.status("⏳ POD upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
-    try:
-        status.write("1/3: A4 full-page PDF बन रही है...")
+    with st.spinner("📄 A4 PDF बन रही है और अपलोड हो रही है..."):
         final_bytes = build_a4_pdf(up_files, crop_map=crop_map)
-        if not final_bytes:
-            status.update(label="❌ POD file process नहीं हुई।", state="error")
-            return
-        status.write("2/3: Google Drive पर upload हो रहा है...")
-        f_name = f"POD_{gr_no}_{truck_no}.pdf"
-        d_id = upload_to_drive(final_bytes, f_name)
-        if not d_id:
-            status.update(label="❌ Drive upload fail हुआ।", state="error")
-            return
-        status.write("3/3: Owner_Ledger में link save हो रहा है...")
-        pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
-        db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
-        invalidate_sheet_cache()
-        status.update(label="✅ POD A4 full-page PDF save हो गई।", state="complete")
-        st.success("✅ POD सुरक्षित हो गई!")
-        time.sleep(1.0)
-        st.rerun()
-    except Exception as exc:
-        status.update(label=f"❌ POD upload error: {exc}", state="error")
+        if final_bytes:
+            f_name = f"POD_{gr_no}_{truck_no}.pdf"
+            d_id = upload_to_drive(final_bytes, f_name)
+            if d_id:
+                pod_url = d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view"
+                db.worksheet("Owner_Ledger").append_row([str(datetime.date.today()), trip_id, gr_no, truck_no, f"POD Link: {pod_url}", 0])
+                invalidate_sheet_cache()
+                st.success("✅ POD सुरक्षित हो गई!")
+                time.sleep(1.5); st.rerun()
+            else: st.error("❌ Drive अपलोड फेल!")
 
 def save_balance_to_ledgers(db, date_val, trip_id, gr_no, truck_no, amount, bank_name, remark):
     try:

@@ -10,7 +10,6 @@ import requests
 import streamlit as st
 from PIL import Image, ImageOps
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
-from a4_pdf_utils import build_single_upload_as_a4_pdf, build_a4_full_pdf_from_uploads
 from doc_link_utils import extract_links, extract_pod_links_from_owner_rows, extract_document_sheet_links
 
 from sheet_utils import (
@@ -245,66 +244,43 @@ def upload_to_drive(file_bytes: bytes, file_name: str, mime_type: str) -> str | 
 
 
 def upload_document_files(files, doc_code: str, gr_no: str, truck_no: str, trip_id: str, crop_map=None) -> Tuple[List[str], str]:
-    """Upload every selected file separately as a print-ready A4 PDF.
-
-    - Multiple files merge नहीं होंगी.
-    - हर JPG/PNG/HEIC/PDF अलग PDF बनेगी.
-    - GR/POD page पर छोटा paste होने की problem fix: white border auto-crop + full A4 fit.
+    """
+    Separate-file mode:
+    - हर JPG/PNG photo अलग JPEG file बनकर Google Drive में upload होगी.
+    - हर PDF अलग PDF file के रूप में upload होगी.
+    - कोई multiple photo एक PDF/file में merge नहीं होगी.
+    Returns: (urls, source_names)
     """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{doc_code}_{_clean_file_part(gr_no)}_{_clean_file_part(truck_no)}_{_clean_file_part(trip_id)}_{timestamp}"
     urls: List[str] = []
     source_names = ", ".join([f.name for f in files])
 
+    total = len(files)
     for zero_index, uploaded_file in enumerate(files):
-        idx = f"{zero_index + 1:02d}"
+        i = zero_index + 1
+        idx = f"{i:02d}"
         original_part = _clean_file_part(uploaded_file.name.rsplit('.', 1)[0])
         try:
-            if not (_is_image(uploaded_file) or _is_pdf(uploaded_file)):
+            if _is_image(uploaded_file):
+                img_bytes = image_to_jpeg_bytes(uploaded_file, crop_map=crop_map, file_index=zero_index)
+                if not img_bytes:
+                    continue
+                file_name = f"{base_name}_{idx}_{original_part}.jpg"
+                url = upload_to_drive(img_bytes, file_name, "image/jpeg")
+            elif _is_pdf(uploaded_file):
+                file_name = f"{base_name}_{idx}_{original_part}.pdf"
+                pdf_bytes = get_processed_pdf_bytes(uploaded_file, crop_map=crop_map, index=zero_index)
+                url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
+            else:
                 continue
-            pdf_bytes = build_single_upload_as_a4_pdf(
-                uploaded_file,
-                crop_map=crop_map or {},
-                index=zero_index,
-                get_processed_image_func=get_processed_image,
-                get_processed_pdf_func=get_processed_pdf_bytes,
-            )
-            if not pdf_bytes:
-                continue
-            file_name = f"{base_name}_{idx}_{original_part}.pdf"
-            url = upload_to_drive(pdf_bytes, file_name, "application/pdf")
+
             if url:
                 urls.append(url)
-        except Exception as exc:
-            st.warning(f"{uploaded_file.name} process नहीं हुई: {exc}")
+        except Exception:
             continue
 
     return urls, source_names
-
-
-def upload_pod_combined_pdf(files, gr_no: str, truck_no: str, trip_id: str, crop_map=None) -> Tuple[List[str], str]:
-    """Create one multi-page A4 PDF for all selected POD files and upload once.
-
-    This replaces the old POD behavior where multiple POD photos created multiple Drive links.
-    GR/GRD upload still uses separate files.
-    """
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = f"POD_GR_{_clean_file_part(gr_no)}_{_clean_file_part(truck_no)}_{_clean_file_part(trip_id)}_{timestamp}.pdf"
-    source_names = ", ".join([f.name for f in files])
-    try:
-        pdf_bytes = build_a4_full_pdf_from_uploads(
-            list(files or []),
-            crop_map=crop_map or {},
-            get_processed_image_func=get_processed_image,
-            get_processed_pdf_func=get_processed_pdf_bytes,
-        )
-        if not pdf_bytes:
-            return [], source_names
-        url = upload_to_drive(pdf_bytes, base_name, "application/pdf")
-        return ([url] if url else []), source_names
-    except Exception as exc:
-        st.error(f"POD combined PDF process error: {exc}")
-        return [], source_names
 
 
 def get_bookings_df() -> pd.DataFrame:
@@ -573,7 +549,7 @@ def show_documents_upload_page():
         unsafe_allow_html=True,
     )
     st.header("📤 POD / GR-GRD Easy Upload")
-    st.caption("Google Sheets + Google Drive mode. POD में multiple photos/PDF एक combined A4 PDF बनेंगे; GR/GRD अलग-अलग files रहेंगे।")
+    st.caption("Google Sheets + Google Drive mode. Multiple photos/PDF अलग-अलग files के रूप में Drive पर save होंगे।")
 
     df = get_bookings_df()
     if df.empty:
@@ -665,11 +641,7 @@ def show_documents_upload_page():
         with st.expander("Selected files देखें"):
             for f in files:
                 st.write(f"• {f.name}")
-        
-        if doc_type == "POD":
-            st.info("POD mode: selected सभी photos/PDF एक single multi-page A4 PDF बनेंगे। Mobile camera में Flash ON रखें।")
-        else:
-            st.info("GR/GRD mode: हर selected file अलग print-ready A4 PDF के रूप में upload होगी।")
+        st.info("हर JPG/PNG photo अलग image file बनेगी। हर PDF अलग PDF file के रूप में upload होगी।")
         docs_crop_map = render_crop_tool(
             files,
             key_prefix=f"docs_crop_{trip_id}_{doc_type}",
@@ -689,11 +661,9 @@ def show_documents_upload_page():
             st.error("Trip ID missing है।")
             return
 
+        doc_code = "GRD" if doc_type == "GR / GRD" else "POD"
         with st.spinner("Files process होकर Google Drive पर upload हो रही हैं..."):
-            if doc_type == "POD":
-                urls, source_names = upload_pod_combined_pdf(files, gr_no, truck_no, trip_id, crop_map=docs_crop_map)
-            else:
-                urls, source_names = upload_document_files(files, "GRD", gr_no, truck_no, trip_id, crop_map=docs_crop_map)
+            urls, source_names = upload_document_files(files, doc_code, gr_no, truck_no, trip_id, crop_map=docs_crop_map)
 
         if not urls:
             st.error("Drive upload fail हुआ। Google Apps Script URL / Drive permission check करें।")
@@ -720,11 +690,7 @@ def show_documents_upload_page():
         )
 
         if ok:
-            
-            if doc_type == "POD":
-                st.success(f"✅ POD combined PDF save हो गई। {len(files)} file(s) = 1 PDF link Google Sheet में save हुआ।")
-            else:
-                st.success(f"✅ Upload complete. {len(urls)} separate file link(s) Google Sheet में save हो गए।")
+            st.success(f"✅ Upload complete. {len(urls)} separate file link(s) Google Sheet में save हो गए।")
             for i, url in enumerate(urls[:10], start=1):
                 st.link_button(f"📥 Uploaded file {i} खोलें", url, type="secondary")
             if len(urls) > 10:
