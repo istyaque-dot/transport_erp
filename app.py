@@ -2,6 +2,11 @@ import datetime
 import sys
 import streamlit as st
 
+try:
+    from auth_utils import login_user, logout_user, restore_login_from_cookie
+except Exception:
+    login_user = logout_user = restore_login_from_cookie = None
+
 # FORCE UNINSTALL old global button guard if Streamlit process reused old module.
 # Old action_guard monkey-patched st.button and caused: "Processing... duplicate click blocked".
 _old_guard = sys.modules.get("action_guard")
@@ -64,8 +69,18 @@ st.markdown("""
 
 
 def check_password():
+    # 1) Normal Streamlit session login
     if st.session_state.get("password_correct", False):
         return True
+
+    # 2) Hard refresh / browser reload login restore
+    # This uses auth_utils.py cookie/query-token logic. If package is missing, app still shows login.
+    if restore_login_from_cookie is not None:
+        try:
+            if restore_login_from_cookie():
+                return True
+        except Exception:
+            pass
 
     st.markdown(
         "<div style='text-align:center; padding-top:10vh;'><div style='font-size:4rem;'>🚛</div>"
@@ -77,9 +92,16 @@ def check_password():
         with st.form("login_form_new"):
             u = st.text_input("👤 Username")
             p = st.text_input("🔑 Password", type="password")
+            remember = st.checkbox("Login याद रखें", value=True)
             if st.form_submit_button("🚀 Login करें", use_container_width=True):
                 if u == "admin" and p == "khan786":
-                    st.session_state["password_correct"] = True
+                    if login_user is not None:
+                        try:
+                            login_user("admin", remember=remember, days=30)
+                        except Exception:
+                            st.session_state["password_correct"] = True
+                    else:
+                        st.session_state["password_correct"] = True
                     st.rerun()
                 else:
                     st.error("❌ गलत यूजरनाम या पासवर्ड")
@@ -149,7 +171,13 @@ def show_home_page():
 if check_password():
     st.sidebar.title("🚛 ERP Menu")
     if st.sidebar.button("🚪 Logout"):
-        st.session_state["password_correct"] = False
+        if logout_user is not None:
+            try:
+                logout_user()
+            except Exception:
+                st.session_state["password_correct"] = False
+        else:
+            st.session_state["password_correct"] = False
         st.rerun()
 
     with st.sidebar.expander("⚙️ Safety", expanded=False):
