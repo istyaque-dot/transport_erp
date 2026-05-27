@@ -6,6 +6,7 @@ import requests
 import base64
 from PIL import Image
 from crop_utils import get_processed_image, get_processed_pdf_bytes, render_crop_tool
+from a4_pdf_utils import build_a4_full_pdf_from_uploads
 import io
 import json
 import gspread
@@ -15,16 +16,13 @@ from supabase import create_client
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx2zpk3_Zl_7sdjNP8eZxehjt5B7TfxjPYVNxYqzGSCYjU-k55DLaWgG1E0UISE9vjE/exec"
 
 # ==========================================
-# 🗄️ SUPABASE DATABASE CONNECTION (Legacy - not used in main flow)
+# 🗄️ SUPABASE DATABASE CONNECTION
 # ==========================================
 @st.cache_resource
 def get_supabase_client():
-    try:
-        clean_url = str(st.secrets["supabase"]["url"]).strip()
-        clean_key = str(st.secrets["supabase"]["key"]).strip()
-        return create_client(clean_url, clean_key)
-    except:
-        return None
+    clean_url = str(st.secrets["supabase"]["url"]).strip()
+    clean_key = str(st.secrets["supabase"]["key"]).strip()
+    return create_client(clean_url, clean_key)
 
 try:
     supabase = get_supabase_client()
@@ -32,23 +30,145 @@ except Exception:
     supabase = None
 
 def upload_to_drive(file_bytes, file_name):
-    if file_name.lower().endswith(".pdf"):
-        mime_type = "application/pdf"
-    elif file_name.lower().endswith(".png"):
-        mime_type = "image/png"
-    else:
-        mime_type = "image/jpeg"
+    if file_name.lower().endswith(".pdf"): mime_type = "application/pdf"
+    elif file_name.lower().endswith(".png"): mime_type = "image/png"
+    else: mime_type = "image/jpeg"
     b64_data = base64.b64encode(file_bytes).decode('utf-8')
     payload = {"fileName": file_name, "mimeType": mime_type, "fileData": b64_data}
     try:
         res = requests.post(WEB_APP_URL, data=payload, timeout=60)
         result = res.text.strip()
         return result if "Error" not in result else None
-    except:
-        return None
+    except: return None
+
+# 🟢 A4 FULL-PAGE PDF LOGIC
+def prepare_pod_file(uploaded_files, crop_map=None):
+    """Return print-ready A4 PDF bytes for GR/POD uploads.
+
+    Fixes the issue where a GR/POD copy is pasted small in the centre of an A4 page.
+    Images and already-made PDFs are auto-cropped for white margins and then fitted
+    to A4 at maximum size without stretching or cutting.
+    """
+    if not uploaded_files:
+        return None, None
+    final_pdf = build_a4_full_pdf_from_uploads(
+        list(uploaded_files),
+        crop_map=crop_map or {},
+        get_processed_image_func=get_processed_image,
+        get_processed_pdf_func=get_processed_pdf_bytes,
+    )
+    return (final_pdf, "pdf") if final_pdf else (None, None)
+
+def save_gr_link_to_db(trip_id, gr_url):
+    try:
+        supabase.table("bookings").update({"google_url": gr_url}).eq("trip_id", str(trip_id)).execute()
+        return True
+    except: return False
+
+def save_booking_to_db(row_data):
+    try:
+        data_dict = {
+            "date": row_data[0],
+            "from_loc": row_data[1],
+            "company": row_data[2],
+            "freight_truck": float(row_data[3]),
+            "freight_company": float(row_data[4]),
+            "weight": float(row_data[5]),
+            "truck_no": row_data[6],
+            "destination": row_data[7],
+            "gr_number": row_data[8],
+            "universal_amount": float(row_data[9]),
+            "connect_person": row_data[10],
+            "totalfright": float(row_data[11]),
+            "truck_freight": float(row_data[12]),
+            "universal_payment": float(row_data[13]),
+            "trip_id": row_data[14],
+            "ishtyaque": float(row_data[15])
+        }
+        supabase.table("bookings").insert(data_dict).execute()
+        return True
+    except Exception as e: 
+        st.error(f"DB Error: {e}")
+        return False
+
+@st.cache_data(ttl=600)
+def get_all_trips():
+    try:
+        response = supabase.table("bookings").select("*").execute()
+        if response.data:
+            df = pd.DataFrame(response.data)
+            ordered_cols = ["date", "from_loc", "company", "freight_truck", "freight_company", 
+                            "weight", "truck_no", "destination", "gr_number", "universal_amount", 
+                            "connect_person", "totalfright", "truck_freight", "universal_payment", 
+                            "trip_id", "ishtyaque", "google_url"]
+            for col in ordered_cols:
+                if col not in df.columns:
+                    df[col] = None
+            return df[ordered_cols]
+        return pd.DataFrame()
+    except: return pd.DataFrame()
+
+def update_booking_in_db(trip_id, updated_row):
+    try:
+        data_dict = {
+            "date": updated_row[0], "from_loc": updated_row[1], "company": updated_row[2],
+            "freight_truck": float(updated_row[3]), "freight_company": float(updated_row[4]),
+            "weight": float(updated_row[5]), "truck_no": updated_row[6], "destination": updated_row[7],
+            "gr_number": updated_row[8], "universal_amount": float(updated_row[9]),
+            "connect_person": updated_row[10], "totalfright": float(updated_row[11]),
+            "truck_freight": float(updated_row[12]), "universal_payment": float(updated_row[13]),
+            "ishtyaque": float(updated_row[15])
+        }
+        supabase.table("bookings").update(data_dict).eq("trip_id", str(trip_id)).execute()
+        return True
+    except: return False
+
+def save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        gr = str(gr_no).strip() if str(gr_no).strip() else "N/A"
+        
+        supabase.table("company_ledger").insert({
+            "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
+            "truck_no": str(truck_no), "destination": str(dest), "freight": float(comp_amt)
+        }).execute()
+        
+        supabase.table("owner_ledger").insert({
+            "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
+            "truck_no": str(truck_no), "destination": str(dest), "freight": float(owner_amt)
+        }).execute()
+        
+        if float(uni_amt) > 0:
+            supabase.table("universal_ledger").insert({
+                "date": str(date_val), "trip_date": str(trip_id), "gr_no": gr, 
+                "comment": "N/A", "truck_no": f"Freight: {truck_no}", "payment": -float(uni_amt)
+            }).execute()
+            
+        if float(ish_amt) > 0:
+            supabase.table("ishtyaque_ledger").insert({
+                "date": str(date_val), "trip_id": str(trip_id), "gr_no": gr, 
+                "comment": "N/A", "truck_no": f"Profit: {truck_no}", "amount": -float(ish_amt)
+            }).execute()
+            
+        return True
+    except Exception as e: 
+        st.error(f"Ledger Insert Error: {e}")
+        return False
+
+def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt):
+    try:
+        supabase.table("company_ledger").delete().eq("trip_id", str(trip_id)).execute()
+        supabase.table("owner_ledger").delete().eq("trip_id", str(trip_id)).execute()
+        supabase.table("universal_ledger").delete().eq("trip_date", str(trip_id)).execute()
+        supabase.table("ishtyaque_ledger").delete().eq("trip_id", str(trip_id)).execute()
+        
+        save_to_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt, uni_amt, ish_amt)
+        return True
+    except: return False
 
 # ==========================================
-# ✅ STABILITY PATCH: Google Sheets mode (Active)
+# ✅ STABILITY PATCH: Google Sheets mode
+# Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
+# इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
 # ==========================================
 from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
 
@@ -163,114 +283,525 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
         st.error(f"Ledger update error: {e}")
         return False
 
+
+
+# ==========================================
+# 📥 BULK BOOKING EDIT FROM GOOGLE SHEET
+# ==========================================
+BULK_BOOKING_SHEET_NAME = "Bulk_Booking_Edit"
+BULK_BOOKING_HEADERS = [
+    "Status", "GR No", "Date", "Truck No", "Company", "From", "Destination",
+    "Weight", "Company Rate", "Owner Rate", "Universal Amt", "Ishtyaque Profit",
+    "Comments", "Error", "Processed At"
+]
+
+
+def _bb_clean_str(v, default=""):
+    if v is None:
+        return default
+    try:
+        if pd.isna(v):
+            return default
+    except Exception:
+        pass
+    txt = str(v).strip()
+    if txt.lower() in ["", "nan", "none"]:
+        return default
+    return txt
+
+
+def _bb_norm_gr(v):
+    s = _bb_clean_str(v, "")
+    s = s.replace("G.R.No.", "").replace("G.R.No", "")
+    s = s.replace("G.R.", "").replace("G.R", "")
+    s = s.replace("GR No", "").replace("GR", "")
+    s = s.replace("gr", "").replace("Gr", "")
+    s = s.replace("-", "").replace("/", "").replace(" ", "")
+    try:
+        if s.endswith(".0"):
+            s = s[:-2]
+        f = float(s)
+        if f.is_integer():
+            s = str(int(f))
+    except Exception:
+        pass
+    return s.upper().strip()
+
+
+def _bb_clean_num(v, default=None):
+    txt = _bb_clean_str(v, "")
+    if txt == "":
+        return default
+    txt = txt.replace(",", "").replace("₹", "").strip()
+    try:
+        return float(txt)
+    except Exception:
+        return default
+
+
+def _bb_parse_date(v, old_value=""):
+    txt = _bb_clean_str(v, "")
+    if txt == "":
+        return old_value
+    try:
+        dt = pd.to_datetime(txt, dayfirst=True, errors="coerce")
+        if pd.notna(dt):
+            return str(dt.date())
+    except Exception:
+        pass
+    return txt
+
+
+def _bb_to_int(v):
+    try:
+        return int(round(float(v)))
+    except Exception:
+        return 0
+
+
+def ensure_bulk_booking_sheet():
+    db = connect_to_sheet_booking()
+    try:
+        ws = db.worksheet(BULK_BOOKING_SHEET_NAME)
+        first = ws.row_values(1)
+        if not first:
+            ws.update("A1", [BULK_BOOKING_HEADERS])
+        return True, "Bulk_Booking_Edit tab ready है।"
+    except Exception:
+        try:
+            ws = db.add_worksheet(title=BULK_BOOKING_SHEET_NAME, rows=1000, cols=len(BULK_BOOKING_HEADERS) + 5)
+            ws.update("A1", [BULK_BOOKING_HEADERS])
+            return True, "Bulk_Booking_Edit tab बना दिया गया।"
+        except Exception as e:
+            return False, str(e)
+
+
+def _load_bulk_booking_rows(limit=100):
+    db = connect_to_sheet_booking()
+    ws = db.worksheet(BULK_BOOKING_SHEET_NAME)
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return ws, [], []
+    header = [str(h).strip() for h in values[0]]
+    rows = []
+    for idx, row in enumerate(values[1:], start=2):
+        norm = row + [""] * max(0, len(header) - len(row))
+        rec = {header[i]: norm[i] for i in range(len(header)) if header[i]}
+        status = _bb_clean_str(rec.get("Status", "")).upper()
+        if status in ["", "PENDING"]:
+            rec["_sheet_row"] = idx
+            rows.append(rec)
+        if len(rows) >= limit:
+            break
+    return ws, header, rows
+
+
+def _bookings_df_and_ws():
+    db = connect_to_sheet_booking()
+    ws = db.worksheet("Bookings")
+    values = ws.get_all_values()
+    if len(values) <= 1:
+        return ws, pd.DataFrame()
+    max_cols = max(len(r) for r in values)
+    norm = [r + [""] * (max_cols - len(r)) for r in values]
+    header = norm[0]
+    df = pd.DataFrame(norm[1:], columns=header)
+    df["_sheet_row"] = list(range(2, len(norm) + 1))
+    return ws, df
+
+
+def _build_updated_booking_row(old_row, bulk_rec):
+    # Bookings schema indexes:
+    # 0 Date, 1 From, 2 Company, 3 Owner Rate, 4 Company Rate, 5 Weight,
+    # 6 Truck No, 7 Destination, 8 GR Number, 9 Universal Amount, 10 Comments,
+    # 11 Company Freight, 12 Owner Freight, 13 Universal Payment, 14 Trip ID, 15 Ishtyaque
+    old = [str(x) for x in list(old_row.iloc[:16])]
+    while len(old) < 16:
+        old.append("")
+
+    def set_text(col_name, idx):
+        val = _bb_clean_str(bulk_rec.get(col_name, ""), "")
+        if val != "":
+            old[idx] = val
+
+    def set_num(col_name, idx):
+        val = _bb_clean_num(bulk_rec.get(col_name, ""), None)
+        if val is not None:
+            old[idx] = val
+
+    # Blank field = no change
+    new_date = _bb_parse_date(bulk_rec.get("Date", ""), old[0])
+    old[0] = new_date
+    set_text("From", 1)
+    set_text("Company", 2)
+    set_num("Owner Rate", 3)
+    set_num("Company Rate", 4)
+    set_num("Weight", 5)
+    set_text("Truck No", 6)
+    set_text("Destination", 7)
+    # GR No match key है; GR No blank होने पर पुराना GR रहेगा, लेकिन usual case में same रहेगा.
+    gr_val = _bb_clean_str(bulk_rec.get("GR No", ""), "")
+    if gr_val:
+        old[8] = gr_val
+    set_num("Universal Amt", 9)
+    set_text("Comments", 10)
+    set_num("Ishtyaque Profit", 15)
+
+    weight = _bb_clean_num(old[5], 0) or 0
+    comp_rate = _bb_clean_num(old[4], 0) or 0
+    owner_rate = _bb_clean_num(old[3], 0) or 0
+    uni_amt = _bb_clean_num(old[9], 0) or 0
+    comp_freight = int(weight * comp_rate) + int(uni_amt)
+    owner_freight = int(weight * owner_rate)
+    final_uni_amt = int(uni_amt * 0.99) if uni_amt > 0 else 0
+    old[11] = comp_freight
+    old[12] = owner_freight
+    old[13] = final_uni_amt
+    return old[:16]
+
+
+def _preview_bulk_booking_rows(bulk_rows, bookings_df):
+    results = []
+    if bookings_df is None or bookings_df.empty:
+        for r in bulk_rows:
+            results.append({
+                "Sheet Row": r.get("_sheet_row"), "GR No": r.get("GR No", ""),
+                "Status": "ERROR", "Reason": "Bookings sheet empty/not loaded"
+            })
+        return results
+
+    gr_series = bookings_df.iloc[:, 8].apply(_bb_norm_gr) if bookings_df.shape[1] > 8 else pd.Series([], dtype=str)
+    for rec in bulk_rows:
+        gr = _bb_norm_gr(rec.get("GR No", ""))
+        if not gr:
+            results.append({"Sheet Row": rec.get("_sheet_row"), "GR No": "", "Status": "ERROR", "Reason": "GR No blank"})
+            continue
+        matches = bookings_df[gr_series == gr]
+        if len(matches) == 0:
+            results.append({"Sheet Row": rec.get("_sheet_row"), "GR No": rec.get("GR No", ""), "Status": "ERROR", "Reason": "GR booking नहीं मिला"})
+            continue
+        if len(matches) > 1:
+            results.append({"Sheet Row": rec.get("_sheet_row"), "GR No": rec.get("GR No", ""), "Status": "ERROR", "Reason": f"Same GR की {len(matches)} bookings मिलीं"})
+            continue
+        old_row = matches.iloc[0]
+        updated = _build_updated_booking_row(old_row, rec)
+        changes = []
+        field_map = [
+            ("Date", 0), ("From", 1), ("Company", 2), ("Owner Rate", 3),
+            ("Company Rate", 4), ("Weight", 5), ("Truck No", 6), ("Destination", 7),
+            ("Universal Amt", 9), ("Comments", 10), ("Ishtyaque Profit", 15)
+        ]
+        for name, idx in field_map:
+            if _bb_clean_str(rec.get(name, ""), "") != "" and str(old_row.iloc[idx]) != str(updated[idx]):
+                changes.append(name)
+        if not changes:
+            reason = "No non-blank changes; row skip हो सकती है"
+        else:
+            reason = ", ".join(changes)
+        results.append({
+            "Sheet Row": rec.get("_sheet_row"),
+            "Booking Row": int(old_row.get("_sheet_row", 0)),
+            "Trip ID": str(old_row.iloc[14]) if len(old_row) > 14 else "",
+            "GR No": rec.get("GR No", ""),
+            "Truck No": updated[6],
+            "Destination": updated[7],
+            "Company": updated[2],
+            "Company Rate": updated[4],
+            "Owner Rate": updated[3],
+            "Weight": updated[5],
+            "Status": "READY" if changes else "SKIP",
+            "Reason": reason,
+            "_bulk_rec": rec,
+            "_old_row": old_row,
+            "_updated_row": updated,
+        })
+    return results
+
+
+def _col_letter(n):
+    s = ""
+    while n:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _bulk_header_index(header, name):
+    try:
+        return header.index(name) + 1
+    except ValueError:
+        return None
+
+
+def process_bulk_booking_from_sheet(preview_rows, bulk_header):
+    ready = [r for r in preview_rows if r.get("Status") == "READY"]
+    if not ready:
+        return False, "Ready row नहीं है।"
+    try:
+        db = connect_to_sheet_booking()
+        ws_book = db.worksheet("Bookings")
+        ws_bulk = db.worksheet(BULK_BOOKING_SHEET_NAME)
+        status_col = _bulk_header_index(bulk_header, "Status") or 1
+        error_col = _bulk_header_index(bulk_header, "Error") or 14
+        processed_col = _bulk_header_index(bulk_header, "Processed At") or 15
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        book_updates = []
+        bulk_updates = []
+        ledger_count = 0
+        for r in ready:
+            book_row = int(r["Booking Row"])
+            updated = r["_updated_row"]
+            book_updates.append({"range": f"A{book_row}:P{book_row}", "values": [updated]})
+            src_row = int(r["Sheet Row"])
+            bulk_updates.append({"range": f"{_col_letter(status_col)}{src_row}", "values": [["DONE"]]})
+            bulk_updates.append({"range": f"{_col_letter(error_col)}{src_row}", "values": [[""]]})
+            bulk_updates.append({"range": f"{_col_letter(processed_col)}{src_row}", "values": [[now]]})
+
+        # Mark errors/skips too, so they do not look unprocessed.
+        for r in preview_rows:
+            if r.get("Status") in ["ERROR", "SKIP"]:
+                src_row = int(r["Sheet Row"])
+                bulk_updates.append({"range": f"{_col_letter(status_col)}{src_row}", "values": [[r.get("Status")]]})
+                bulk_updates.append({"range": f"{_col_letter(error_col)}{src_row}", "values": [[r.get("Reason", "")]]})
+                bulk_updates.append({"range": f"{_col_letter(processed_col)}{src_row}", "values": [[now]]})
+
+        if book_updates:
+            ws_book.batch_update(book_updates)
+        if bulk_updates:
+            ws_bulk.batch_update(bulk_updates)
+
+        # Update ledgers row-by-row after booking data update.
+        for r in ready:
+            u = r["_updated_row"]
+            try:
+                update_ledgers(u[0], u[14], u[8], u[6], u[7], u[11], u[12], u[13], u[15])
+                ledger_count += 1
+            except Exception:
+                pass
+        invalidate_sheet_cache()
+        try:
+            get_all_trips.clear()
+        except Exception:
+            pass
+        return True, f"{len(ready)} booking rows updated. Ledger refresh: {ledger_count}"
+    except Exception as e:
+        return False, str(e)
+
+
+def render_bulk_booking_from_google_sheet():
+    st.markdown("### 📥 Bulk Booking Edit from Google Sheet")
+    st.caption("Bulk_Booking_Edit tab में data भरें. Blank cell = existing booking value change नहीं होगी. GR No existing booking match key रहेगा.")
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        if st.button("🧩 Bulk_Booking_Edit tab बनाएं/check", use_container_width=True, key="bb_create_tab"):
+            ok, msg = ensure_bulk_booking_sheet()
+            st.success(msg) if ok else st.error(msg)
+    with c2:
+        st.info("Columns: Status, GR No, Date, Truck No, Company, From, Destination, Weight, Company Rate, Owner Rate, Universal Amt, Ishtyaque Profit, Comments")
+
+    if st.button("🔍 Bulk_Booking_Edit Preview Load करें", use_container_width=True, key="bb_preview_btn"):
+        try:
+            bulk_ws, bulk_header, bulk_rows = _load_bulk_booking_rows(limit=100)
+            book_ws, bookings_df = _bookings_df_and_ws()
+            preview = _preview_bulk_booking_rows(bulk_rows, bookings_df)
+            st.session_state["bulk_booking_preview"] = preview
+            st.session_state["bulk_booking_header"] = bulk_header
+        except Exception as e:
+            st.error(f"Preview load error: {e}")
+
+    preview = st.session_state.get("bulk_booking_preview", [])
+    if preview:
+        display_rows = []
+        for r in preview:
+            display_rows.append({k: v for k, v in r.items() if not str(k).startswith("_")})
+        df_prev = pd.DataFrame(display_rows)
+        ready_count = int((df_prev["Status"] == "READY").sum()) if "Status" in df_prev.columns else 0
+        error_count = int((df_prev["Status"] == "ERROR").sum()) if "Status" in df_prev.columns else 0
+        skip_count = int((df_prev["Status"] == "SKIP").sum()) if "Status" in df_prev.columns else 0
+        st.markdown(f"**Preview:** ✅ Ready {ready_count} | ⚠️ Error {error_count} | ⏭️ Skip {skip_count}")
+        st.dataframe(df_prev, use_container_width=True, height=260)
+        if st.button("✅ Confirm & Process Bulk_Booking_Edit Sheet", type="primary", use_container_width=True, key="bb_process_btn"):
+            with st.spinner("Bulk booking update हो रहा है..."):
+                ok, msg = process_bulk_booking_from_sheet(preview, st.session_state.get("bulk_booking_header", BULK_BOOKING_HEADERS))
+            if ok:
+                st.success(msg)
+                st.session_state.pop("bulk_booking_preview", None)
+                st.session_state.pop("bulk_booking_header", None)
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(msg)
+
+
 # ==========================================
 # 🎨 CSS
 # ==========================================
 BOOKING_CSS = """
 <style>
-    .block-container { padding-top: 2rem !important; padding-bottom: 1rem !important; max-width: 98% !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 4px !important; background: #f0f4ff !important; border-radius: 10px !important; padding: 4px !important; }
-    .stTabs [data-baseweb="tab"] { border-radius: 8px !important; padding: 4px 16px !important; font-weight: 600 !important; font-size: 0.88rem !important; color: #444 !important; }
-    .stTabs [aria-selected="true"] { background: #003399 !important; color: white !important; }
-    div[data-testid="stForm"] { background: #ffffff !important; border: 1px solid #e2e8f0 !important; border-radius: 12px !important; padding: 16px 20px !important; box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important; }
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 1rem !important;
+        max-width: 98% !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px !important;
+        background: #f0f4ff !important;
+        border-radius: 10px !important;
+        padding: 4px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px !important;
+        padding: 4px 16px !important;
+        font-weight: 600 !important;
+        font-size: 0.88rem !important;
+        color: #444 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #003399 !important;
+        color: white !important;
+    }
+
+    /* Form container */
+    div[data-testid="stForm"] {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 12px !important;
+        padding: 16px 20px !important;
+        box-shadow: 0 1px 6px rgba(0,0,0,0.06) !important;
+    }
+
+    /* Headings */
     h2 { font-size: 1.4rem !important; margin-bottom: 2px !important; color: #111 !important; }
     h3 { font-size: 1.1rem !important; margin-bottom: 4px !important; color: #222 !important; }
     h4 { font-size: 1rem !important; margin-bottom: 4px !important; color: #003399 !important; }
+
+    /* Spacing */
     div[data-testid="stVerticalBlock"] { gap: 0.45rem !important; }
     div[data-testid="stHorizontalBlock"] { gap: 0.55rem !important; }
-    .stTextInput > div > div > input, .stNumberInput > div > div > input { border-radius: 7px !important; border: 1px solid #cbd5e1 !important; padding: 4px 10px !important; min-height: 1.9rem !important; font-size: 0.88rem !important; background: #fafafa !important; }
-    .stTextInput > div > div > input:focus, .stNumberInput > div > div > input:focus { border-color: #003399 !important; background: #fff !important; box-shadow: 0 0 0 2px rgba(0,51,153,0.1) !important; }
-    .stSelectbox > div > div { border-radius: 7px !important; border: 1px solid #cbd5e1 !important; min-height: 1.9rem !important; font-size: 0.88rem !important; }
-    label { font-size: 0.8rem !important; font-weight: 700 !important; color: #374151 !important; margin-bottom: 0px !important; }
-    .stButton > button { border-radius: 8px !important; min-height: 1.9rem !important; font-size: 0.88rem !important; font-weight: 600 !important; padding: 2px 14px !important; transition: all 0.15s ease !important; }
-    .stButton > button[kind="primary"] { background: linear-gradient(135deg, #003399, #0055cc) !important; border: none !important; color: white !important; }
-    .stButton > button[kind="primary"]:hover { background: linear-gradient(135deg, #002277, #0044aa) !important; box-shadow: 0 3px 10px rgba(0,51,153,0.3) !important; }
-    div[data-testid="stAlert"] { border-radius: 8px !important; padding: 6px 12px !important; margin: 2px 0 !important; }
+
+    /* Inputs */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        border-radius: 7px !important;
+        border: 1px solid #cbd5e1 !important;
+        padding: 4px 10px !important;
+        min-height: 1.9rem !important;
+        font-size: 0.88rem !important;
+        background: #fafafa !important;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: #003399 !important;
+        background: #fff !important;
+        box-shadow: 0 0 0 2px rgba(0,51,153,0.1) !important;
+    }
+    .stSelectbox > div > div {
+        border-radius: 7px !important;
+        border: 1px solid #cbd5e1 !important;
+        min-height: 1.9rem !important;
+        font-size: 0.88rem !important;
+    }
+
+    /* Labels */
+    label {
+        font-size: 0.8rem !important;
+        font-weight: 700 !important;
+        color: #374151 !important;
+        margin-bottom: 0px !important;
+    }
+
+    /* Buttons */
+    .stButton > button {
+        border-radius: 8px !important;
+        min-height: 1.9rem !important;
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        padding: 2px 14px !important;
+        transition: all 0.15s ease !important;
+    }
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #003399, #0055cc) !important;
+        border: none !important;
+        color: white !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #002277, #0044aa) !important;
+        box-shadow: 0 3px 10px rgba(0,51,153,0.3) !important;
+    }
+
+    /* Alert boxes */
+    div[data-testid="stAlert"] {
+        border-radius: 8px !important;
+        padding: 6px 12px !important;
+        margin: 2px 0 !important;
+    }
     div[data-testid="stAlert"] p { font-size: 0.88rem !important; margin: 0 !important; }
-    div[data-testid="metric-container"] { background: linear-gradient(135deg, #f0f4ff, #e8eeff) !important; border: 1px solid #c7d4f5 !important; border-radius: 10px !important; padding: 8px 12px !important; }
-    div[data-testid="stMetricValue"] { font-size: 1.15rem !important; font-weight: 700 !important; color: #003399 !important; }
-    div[data-testid="stMetricLabel"] { font-size: 0.75rem !important; font-weight: 600 !important; color: #555 !important; }
-    .gr-box { background: #f8faff; border: 1px solid #c7d4f5; border-radius: 10px; padding: 14px; height: 100%; }
-    .summary-bar { background: linear-gradient(135deg, #003399, #0055cc); border-radius: 10px; padding: 10px 18px; color: white; font-size: 0.9rem; font-weight: 600; margin: 6px 0; }
+
+    /* Metric cards */
+    div[data-testid="metric-container"] {
+        background: linear-gradient(135deg, #f0f4ff, #e8eeff) !important;
+        border: 1px solid #c7d4f5 !important;
+        border-radius: 10px !important;
+        padding: 8px 12px !important;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        color: #003399 !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
+        color: #555 !important;
+    }
+
+    /* GR box */
+    .gr-box {
+        background: #f8faff;
+        border: 1px solid #c7d4f5;
+        border-radius: 10px;
+        padding: 14px;
+        height: 100%;
+    }
+
+    /* Summary bar */
+    .summary-bar {
+        background: linear-gradient(135deg, #003399, #0055cc);
+        border-radius: 10px;
+        padding: 10px 18px;
+        color: white;
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin: 6px 0;
+    }
     .summary-bar span { margin-right: 28px; }
-    .confirm-box { background: #fffbeb; border: 1.5px solid #f59e0b; border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; }
+
+    /* Confirm box */
+    .confirm-box {
+        background: #fffbeb;
+        border: 1.5px solid #f59e0b;
+        border-radius: 10px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+    }
+
     hr { margin: 0.4em 0 !important; border-color: #e2e8f0 !important; }
+
+    .stFileUploader section { padding: 4px !important; }
+    .stFileUploader label { display: none !important; }
+    .stFileUploader small { display: none !important; }
+    .stDateInput > div > div > input { border-radius: 7px !important; font-size: 0.88rem !important; }
 </style>
 """
 
 # ==========================================
-# Helper Function for Bulk Processing
-# ==========================================
-def _process_bulk_bookings(df_upload):
-    if df_upload is None or df_upload.empty:
-        st.warning("कोई data नहीं मिला।")
-        return
-
-    success_count, error_count = 0, 0
-    progress_bar = st.progress(0, text="सेव हो रही हैं...")
-
-    with st.spinner(f"⏳ {len(df_upload)} गाड़ियाँ सेव हो रही हैं..."):
-        total = len(df_upload)
-        for index, row in df_upload.iterrows():
-            try:
-                def clean_num(val):
-                    try: return float(val) if pd.notna(val) else 0
-                    except: return 0
-                def clean_str(val):
-                    return str(val).strip() if pd.notna(val) and str(val).lower() != "nan" else ""
-
-                date_str    = clean_str(row.get("Date (YYYY-MM-DD)", "")) or str(datetime.date.today())
-                from_loc    = clean_str(row.get("From", "Kashipur"))
-                company     = clean_str(row.get("Company", "Other"))
-                owner_rate  = clean_num(row.get("Owner Rate", 0))
-                comp_rate   = clean_num(row.get("Company Rate", 0))
-                weight      = clean_num(row.get("Weight", 0))
-                truck_no    = clean_str(row.get("Truck No", ""))
-                to_loc      = clean_str(row.get("To", ""))
-                gr_no       = clean_str(row.get("GR No", "N/A"))
-                uni_amt     = clean_num(row.get("Universal Amt", 0))
-                comments    = clean_str(row.get("Comments", ""))
-                ish_amt     = clean_num(row.get("Ishtyaque Profit", 0))
-
-                if not truck_no or not to_loc:
-                    error_count += 1
-                    continue
-
-                comp_freight   = int(weight * comp_rate) + int(uni_amt)
-                owner_freight  = int(weight * owner_rate)
-                final_uni_amt  = int(uni_amt * 0.99) if uni_amt > 0 else 0
-                trip_id = f"TRP-{datetime.datetime.now().strftime('%y%m%d%H%M%S')}{index}"
-
-                row_data = [
-                    date_str, from_loc, company,
-                    owner_rate, comp_rate, weight,
-                    truck_no, to_loc,
-                    gr_no if gr_no else "N/A",
-                    int(uni_amt), comments,
-                    comp_freight, owner_freight,
-                    final_uni_amt, trip_id, int(ish_amt)
-                ]
-                if save_booking_to_db(row_data):
-                    save_to_ledgers(date_str, trip_id, gr_no, truck_no, to_loc, comp_freight, owner_freight, final_uni_amt, int(ish_amt))
-                    success_count += 1
-                    time.sleep(0.08)
-                else:
-                    error_count += 1
-
-                progress_bar.progress((index + 1) / total, text=f"✅ {success_count} सेव | ⚠️ {error_count} skip")
-            except:
-                error_count += 1
-                continue
-
-    invalidate_sheet_cache()
-    if success_count > 0:
-        st.success(f"🎊 {success_count} गाड़ियाँ सफलतापूर्वक सेव हो गईं!")
-    if error_count > 0:
-        st.warning(f"⚠️ {error_count} rows skip हुईं (गाड़ी नंबर या Destination खाली था)।")
-
-# ==========================================
 # 🖥️ MAIN PAGE
 # ==========================================
+
 def show_booking_page():
     st.markdown(BOOKING_CSS, unsafe_allow_html=True)
     st.header("🚛 बुकिंग मैनेजमेंट")
@@ -280,15 +811,337 @@ def show_booking_page():
     if "bk_saving_lock" not in st.session_state: st.session_state.bk_saving_lock = False
 
     c = st.session_state.bk_ck
-    tab1, tab2, tab3 = st.tabs(["🆕 नई गाड़ी (Single)", "✏️ एडिट बुकिंग", "📑 बल्क अपलोड (Excel / Google Sheet)"])
-
-    # TAB 1 & TAB 2 same rahega (aapke paste jaisa)
+    tab1, tab2, tab3 = st.tabs(["🆕 नई गाड़ी (Single)", "✏️ एडिट बुकिंग", "📑 बल्क अपलोड (Excel)"])
 
     # ══════════════════════════════════════
-    # TAB 3 — बल्क अपलोड (Excel + Google Sheet)
+    # TAB 1 — नई बुकिंग
+    # ══════════════════════════════════════
+    with tab1:
+        if not st.session_state.show_confirm:
+            with st.form(key=f"booking_form_{c}"):
+                st.markdown("#### 🚛 गाड़ी की जानकारी")
+                r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+                with r1c1: b_date = st.date_input("📅 तारीख", datetime.date.today())
+                with r1c2: truck_no = st.text_input("🚛 गाड़ी नंबर")
+                with r1c3: from_loc = st.text_input("📍 कहाँ से", "Kashipur")
+                with r1c4: to_loc = st.text_input("📍 कहाँ तक")
+
+                st.markdown("#### 💰 भाड़े की जानकारी")
+                r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+                with r2c1: company = st.selectbox("🏢 कंपनी", ["Universal Industries", "Other"])
+                with r2c2: weight = st.number_input("⚖️ माल का वज़न (क्विंटल)", min_value=0, step=1)
+                with r2c3: comp_rate = st.number_input("📊 कंपनी रेट (₹/क्विंटल)", min_value=0, step=1)
+                with r2c4: owner_rate = st.number_input("🚛 गाड़ी वाला रेट (₹/क्विंटल)", min_value=0, step=1)
+
+                st.markdown("#### 📋 अन्य जानकारी")
+                r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+                with r3c1: universal_amt = st.number_input("🏭 Universal (₹)", min_value=0, value=1000, step=10)
+                with r3c2: ishtyaque_amt = st.number_input("👤 Ishtyaque (₹)", min_value=0, value=0, step=100)
+                with r3c3: gr_no = st.text_input("📄 GR Number (Optional)")
+                with r3c4: comments = st.text_input("💬 टिप्पणी")
+
+                comp_freight = int(weight * comp_rate) + universal_amt
+                owner_freight = int(weight * owner_rate)
+                tds = int(comp_freight * 0.01)
+                hold_10 = int(comp_freight * 0.10)
+                advance_approx = int(owner_freight * 0.90)
+
+                st.markdown("---")
+                st.markdown("#### 📊 कैलकुलेशन")
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                mc1.metric("💵 कुल कंपनी भाड़ा", f"₹{comp_freight:,}")
+                mc2.metric("🚛 गाड़ी एडवांस (90%)", f"₹{advance_approx:,}")
+                mc3.metric("📋 TDS (1%)", f"₹{tds:,}")
+                mc4.metric("🔒 10% रोक", f"₹{hold_10:,}")
+
+                submitted = st.form_submit_button(
+                    "➡️ सेव करने के लिए आगे बढ़ें",
+                    use_container_width=True, type="primary"
+                )
+
+                if submitted:
+                    if not truck_no or not to_loc:
+                        st.error("⚠️ गाड़ी नंबर और कहाँ तक (Destination) भरना ज़रूरी है!")
+                    else:
+                        st.session_state.temp_data = {
+                            "b_date": b_date, "from_loc": from_loc, "company": company,
+                            "weight": weight, "comp_rate": comp_rate,
+                            "universal_amt": universal_amt, "truck_no": truck_no,
+                            "to_loc": to_loc, "gr_no": gr_no, "owner_rate": owner_rate,
+                            "comments": comments, "ishtyaque_amt": ishtyaque_amt,
+                            "comp_freight": comp_freight, "owner_freight": owner_freight
+                        }
+                        st.session_state.show_confirm = True
+                        st.rerun()
+
+        # Confirm box
+        if st.session_state.show_confirm:
+            d = st.session_state.temp_data
+            st.markdown(f"""
+                <div class='confirm-box'>
+                    ❓ क्या आप पक्का <b>गाड़ी {d['truck_no']}</b> की बुकिंग सेव करना चाहते हैं?<br>
+                    <small>
+                        📍 {d['from_loc']} → {d['to_loc']} &nbsp;|&nbsp;
+                        ⚖️ {d['weight']} क्विंटल &nbsp;|&nbsp;
+                        💵 कंपनी भाड़ा: ₹{d['comp_freight']:,} &nbsp;|&nbsp;
+                        🚛 गाड़ी भाड़ा: ₹{d['owner_freight']:,}
+                    </small>
+                </div>
+            """, unsafe_allow_html=True)
+
+            cb1, cb2 = st.columns([1, 4])
+            if cb1.button("👍 हाँ, सेव करें", type="primary"):
+                if st.session_state.bk_saving_lock:
+                    st.toast("⏳ प्रोसेस हो रहा है...")
+                else:
+                    st.session_state.bk_saving_lock = True
+                    with st.spinner("⏳ डेटा सेव हो रहा है..."):
+                        trip_id = f"TRP-{datetime.datetime.now().strftime('%y%m%d%H%M%S')}"
+                        final_uni_amt = int(d['universal_amt'] * 0.99) if d['universal_amt'] > 0 else 0
+                        row_data = [
+                            str(d['b_date']), str(d['from_loc']), str(d['company']),
+                            d['owner_rate'], d['comp_rate'], d['weight'],
+                            str(d['truck_no']), str(d['to_loc']),
+                            str(d['gr_no']) if d['gr_no'] else "N/A",
+                            d['universal_amt'], str(d['comments']),
+                            d['comp_freight'], d['owner_freight'],
+                            final_uni_amt, trip_id, d['ishtyaque_amt']
+                        ]
+                        if save_booking_to_db(row_data):
+                            save_to_ledgers(
+                                d['b_date'], trip_id, d['gr_no'], d['truck_no'],
+                                d['to_loc'], d['comp_freight'], d['owner_freight'],
+                                final_uni_amt, d['ishtyaque_amt']
+                            )
+                            invalidate_sheet_cache()
+                            st.success(f"✅ गाड़ी {d['truck_no']} की बुकिंग सेव हो गई!")
+                            time.sleep(1.5)
+                            st.session_state.bk_saving_lock = False
+                            st.session_state.show_confirm = False
+                            st.session_state.bk_ck += 1
+                            st.rerun()
+                        else:
+                            st.session_state.bk_saving_lock = False
+                            st.error("❌ बुकिंग सेव नहीं हो पाई।")
+
+            if cb2.button("❌ कैंसिल करें"):
+                st.session_state.show_confirm = False
+                st.rerun()
+
+    # ══════════════════════════════════════
+    # TAB 2 — एडिट बुकिंग
+    # ══════════════════════════════════════
+    with tab2:
+        df_trips = get_all_trips()
+        if df_trips.empty:
+            st.info("कोई पुरानी बुकिंग नहीं मिली।")
+        else:
+            # ✅ Full edit dropdown update
+            # पहले सिर्फ last 50 bookings dropdown में आती थीं. अब पूरी Bookings sheet list आएगी.
+            # Search optional है: खाली छोड़ने पर पूरी list दिखेगी.
+            df_edit = df_trips.copy()
+            if df_edit.shape[1] > 14:
+                df_edit = df_edit[df_edit.iloc[:, 14].astype(str).str.strip() != ""]
+            df_edit = df_edit.iloc[::-1].reset_index(drop=True)
+
+            search_text = st.text_input(
+                "🔎 Booking search",
+                placeholder="GR / गाड़ी नंबर / Destination / Date / Trip ID लिखें — खाली छोड़ें तो पूरी list"
+            ).strip().lower()
+
+            if search_text and df_edit.shape[1] > 14:
+                def _match_edit_row(row):
+                    cols_to_search = [0, 6, 7, 8, 14]
+                    joined = " ".join(
+                        str(row.iloc[i]) for i in cols_to_search
+                        if i < len(row) and pd.notna(row.iloc[i])
+                    ).lower()
+                    return search_text in joined
+                df_edit = df_edit[df_edit.apply(_match_edit_row, axis=1)].reset_index(drop=True)
+
+            st.caption(f"Dropdown में {len(df_edit)} booking(s) loaded | Total bookings: {len(df_trips)}")
+
+            labels, trip_ids = [], []
+            for _, row in df_edit.iterrows():
+                try:
+                    gr_disp = (str(row.iloc[8]).strip()
+                               if pd.notna(row.iloc[8]) and str(row.iloc[8]).strip().lower() not in ["", "nan"]
+                               else "N/A")
+                    trip_disp = str(row.iloc[14]).strip() if len(row) > 14 else "N/A"
+                    labels.append(format_trip_label(row))
+                    trip_ids.append(trip_disp)
+                except Exception:
+                    pass
+
+            selected_idx = st.selectbox(
+                "✏️ एडिट करने के लिए गाड़ी चुनें:",
+                ["चुनें..."] + list(range(len(labels))),
+                format_func=lambda x: "चुनें..." if x == "चुनें..." else labels[x]
+            )
+            st.markdown("<hr style='margin:0.5em 0;border-color:#e2e8f0'>",
+                        unsafe_allow_html=True)
+
+            if selected_idx != "चुनें...":
+                selected_trip_id = trip_ids[selected_idx]
+                row_data = df_edit[
+                    df_edit.iloc[:, 14].astype(str).str.strip() == selected_trip_id
+                ].iloc[0]
+
+                col_edit, col_gr = st.columns([2.2, 1], gap="small")
+
+                # ── Edit Form ──
+                with col_edit:
+                    st.markdown("#### 📝 बुकिंग अपडेट फॉर्म")
+                    with st.form("edit_booking_form"):
+                        def s_int(val):
+                            try: return int(float(val))
+                            except: return 0
+                        def s_str(val):
+                            return str(val) if pd.notna(val) and str(val).lower() != "nan" else ""
+
+                        current_gr = s_str(row_data.iloc[8])
+                        if current_gr == "N/A": current_gr = ""
+
+                        e1, e2, e3 = st.columns(3)
+                        with e1: e_date = st.text_input("📅 तारीख", s_str(row_data.iloc[0]))
+                        with e2: e_truck = st.text_input("🚛 गाड़ी नंबर", s_str(row_data.iloc[6]))
+                        with e3: e_from = st.text_input("📍 कहाँ से", s_str(row_data.iloc[1]))
+
+                        e4, e5, e6 = st.columns(3)
+                        with e4: e_to = st.text_input("📍 कहाँ तक", s_str(row_data.iloc[7]))
+                        with e5: e_company = st.selectbox("🏢 कंपनी",
+                            ["Universal Industries", "Other"],
+                            index=0 if str(row_data.iloc[2]) == "Universal Industries" else 1)
+                        with e6: e_weight = st.number_input("⚖️ वज़न", value=s_int(row_data.iloc[5]), step=1)
+
+                        e7, e8, e9 = st.columns(3)
+                        with e7: e_comp_rate = st.number_input("📊 कंपनी रेट", value=s_int(row_data.iloc[4]), step=1)
+                        with e8: e_owner_rate = st.number_input("🚛 गाड़ी रेट", value=s_int(row_data.iloc[3]), step=1)
+                        with e9: e_uni_amt = st.number_input("🏭 Universal (₹)", value=s_int(row_data.iloc[9]), step=10)
+
+                        e10, e11, e12 = st.columns(3)
+                        with e10: e_ish_amt = st.number_input("👤 Ishtyaque (₹)", min_value=0, value=s_int(row_data.iloc[15]), step=100)
+                        with e11: e_gr = st.text_input("📄 GR Number", current_gr)
+                        with e12: e_comments = st.text_input("💬 टिप्पणी", s_str(row_data.iloc[10]))
+
+                        e_comp_freight = int(e_weight * e_comp_rate) + e_uni_amt
+                        e_owner_freight = int(e_weight * e_owner_rate)
+
+                        st.markdown(f"""
+                            <div class='summary-bar'>
+                                <span>💵 कंपनी भाड़ा: ₹{e_comp_freight:,}</span>
+                                <span>🚛 गाड़ी भाड़ा: ₹{e_owner_freight:,}</span>
+                                <span>⚖️ वज़न: {e_weight} क्विंटल</span>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                        if st.form_submit_button("💾 अपडेट करें",
+                                                 use_container_width=True, type="primary"):
+                            with st.spinner("अपडेट हो रहा है..."):
+                                e_final_uni = int(e_uni_amt * 0.99) if e_uni_amt > 0 else 0
+                                final_gr = str(e_gr).strip() if str(e_gr).strip() else "N/A"
+                                updated_row = [
+                                    str(e_date), str(e_from), str(e_company),
+                                    e_owner_rate, e_comp_rate, e_weight,
+                                    str(e_truck), str(e_to), final_gr,
+                                    e_uni_amt, str(e_comments),
+                                    e_comp_freight, e_owner_freight,
+                                    e_final_uni, selected_trip_id, e_ish_amt
+                                ]
+                                if update_booking_in_db(selected_trip_id, updated_row):
+                                    update_ledgers(
+                                        e_date, selected_trip_id, final_gr, e_truck, e_to,
+                                        e_comp_freight, e_owner_freight, e_final_uni, e_ish_amt
+                                    )
+                                    invalidate_sheet_cache()
+                                    st.success("✅ बुकिंग सफलतापूर्वक अपडेट हो गई!")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                else:
+                                    st.error("❌ अपडेट फेल हो गया।")
+
+                # ── GR Upload ──
+                with col_gr:
+                    st.markdown("<div class='gr-box'>", unsafe_allow_html=True)
+                    st.markdown("#### 📄 GR (बिल्टी) अपलोड")
+
+                    if (len(row_data) > 16
+                            and pd.notna(row_data.iloc[16])
+                            and "http" in str(row_data.iloc[16])):
+                        existing_gr_url = str(row_data.iloc[16])
+                        st.markdown("""
+                            <div style='background:#d1e7dd;border:1px solid #0f5132;
+                            border-radius:8px;padding:6px 12px;
+                            font-size:0.82rem;color:#0f5132;font-weight:bold;
+                            margin-bottom:8px;'>
+                            ✅ GR सुरक्षित है
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.link_button("📥 GR कॉपी देखें", existing_gr_url,
+                                       type="secondary", use_container_width=True)
+                    else:
+                        st.markdown("""
+                            <div style='background:#fff3cd;border:1px solid #ffc107;
+                            border-radius:8px;padding:6px 12px;
+                            font-size:0.82rem;color:#856404;font-weight:bold;
+                            margin-bottom:8px;'>
+                            ⚠️ GR अभी तक अपलोड नहीं
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                    gr_files = st.file_uploader(
+                        "GR फोटो (A4 में सेव होगी)", type=["pdf", "jpg", "jpeg", "png", "heic", "heif"],
+                        accept_multiple_files=True,
+                        key=f"gr_up_{selected_trip_id}",
+                        label_visibility="collapsed"
+                    )
+                    gr_crop_map = {}
+                    if gr_files:
+                        st.caption(f"📎 {len(gr_files)} फ़ाइल चुनी गई")
+                        gr_crop_map = render_crop_tool(
+                            gr_files,
+                            key_prefix=f"booking_gr_crop_{selected_trip_id}",
+                            title="✂️ GR Crop Tool"
+                        )
+
+                    if st.button("🚀 GR अपलोड करें", type="primary", use_container_width=True, key=f"gr_upload_btn_{selected_trip_id}"):
+                        if not gr_files:
+                            st.warning("⚠️ पहले फ़ाइल चुनें!")
+                        else:
+                            status = st.status("⏳ GR upload start हो गया है. कृपया wait करें — दुबारा click न करें.", expanded=True)
+                            try:
+                                status.write("1/3: A4 full-page PDF बन रही है...")
+                                final_bytes, file_ext = prepare_pod_file(gr_files, gr_crop_map)
+                                if not final_bytes:
+                                    status.update(label="❌ फ़ाइल process नहीं हुई।", state="error")
+                                else:
+                                    status.write("2/3: Google Drive पर upload हो रहा है...")
+                                    f_name = f"GR_{row_data.iloc[8]}_{row_data.iloc[6]}.{file_ext}"
+                                    d_id = upload_to_drive(final_bytes, f_name)
+                                    if not d_id:
+                                        status.update(label="❌ Drive upload fail हुआ।", state="error")
+                                    else:
+                                        status.write("3/3: Google Sheet में link save हो रहा है...")
+                                        gr_url = (d_id if d_id.startswith("http") else f"https://drive.google.com/file/d/{d_id}/view")
+                                        if save_gr_link_to_db(selected_trip_id, gr_url):
+                                            invalidate_sheet_cache()
+                                            status.update(label="✅ GR A4 full-page PDF save हो गई।", state="complete")
+                                            st.success("✅ GR सुरक्षित है।")
+                                            time.sleep(1.0)
+                                            st.rerun()
+                                        else:
+                                            status.update(label="❌ Link save fail हुआ।", state="error")
+                            except Exception as exc:
+                                status.update(label=f"❌ Upload error: {exc}", state="error")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════
+    # TAB 3 — बल्क एक्सेल अपलोड
     # ══════════════════════════════════════
     with tab3:
-        st.markdown("### 📑 बल्क बुकिंग अपलोड (Excel / Google Sheet)")
+        render_bulk_booking_from_google_sheet()
+        st.divider()
+        st.markdown("### 📑 Excel से बल्क बुकिंग अपलोड")
 
         template_cols = [
             "Date (YYYY-MM-DD)", "From", "Company", "Owner Rate", "Company Rate",
@@ -297,7 +1150,8 @@ def show_booking_page():
         ]
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            pd.DataFrame(columns=template_cols).to_excel(writer, index=False, sheet_name='BulkBooking')
+            pd.DataFrame(columns=template_cols).to_excel(
+                writer, index=False, sheet_name='BulkBooking')
 
         col_dl, _ = st.columns([1, 2])
         with col_dl:
@@ -309,71 +1163,87 @@ def show_booking_page():
                 use_container_width=True
             )
 
-        st.caption("💡 Tip: Google Sheet में भी ऊपर वाले columns के नाम इस्तेमाल करें (पहली row header होनी चाहिए)")
-
         st.divider()
-
-        import_mode = st.radio(
-            "Import Mode चुनें",
-            ["📁 Excel/CSV File Upload", "📊 Google Sheet Tab से Direct Import"],
-            horizontal=True,
-            key="bulk_import_mode"
+        uploaded_excel = st.file_uploader(
+            "📥 भरी हुई Excel/CSV अपलोड करें",
+            type=["xlsx", "xls", "csv"]
         )
 
-        # MODE 1: Excel/CSV
-        if import_mode == "📁 Excel/CSV File Upload":
-            uploaded_excel = st.file_uploader(
-                "📥 भरी हुई Excel/CSV अपलोड करें",
-                type=["xlsx", "xls", "csv"],
-                key="bulk_excel_uploader"
-            )
-            if uploaded_excel is not None:
-                try:
-                    df_upload = (pd.read_csv(uploaded_excel) if uploaded_excel.name.endswith('.csv') else pd.read_excel(uploaded_excel))
-                    st.markdown(f"**📋 {len(df_upload)} गाड़ियाँ मिलीं — नीचे चेक करें:**")
-                    st.dataframe(df_upload, use_container_width=True, height=250)
+        if uploaded_excel is not None:
+            try:
+                df_upload = (pd.read_csv(uploaded_excel)
+                             if uploaded_excel.name.endswith('.csv')
+                             else pd.read_excel(uploaded_excel))
 
-                    if st.button("🚀 सभी गाड़ियाँ सेव करें (Excel से)", type="primary", use_container_width=True, key="bulk_save_excel"):
-                        _process_bulk_bookings(df_upload)
-                except Exception as e:
-                    st.error(f"❌ Excel फाइल पढ़ने में दिक्कत: {e}")
+                st.markdown(f"**📋 {len(df_upload)} गाड़ियाँ मिलीं — नीचे चेक करें:**")
+                st.dataframe(df_upload, use_container_width=True, height=250)
 
-        # MODE 2: Google Sheet Tab
-        else:
-            st.info("⚡ Google Sheet के उसी Workbook में कोई भी Tab (जैसे: `Bulk_Import_Bookings`) बना लें। पहली row में headers होने चाहिए।")
+                if st.button("🚀 सभी गाड़ियाँ सेव करें",
+                             type="primary", use_container_width=True):
+                    success_count, error_count = 0, 0
+                    progress_bar = st.progress(0, text="सेव हो रही हैं...")
 
-            source_sheet = st.text_input(
-                "📋 Source Google Sheet Tab का नाम",
-                value="Bulk_Import_Bookings",
-                placeholder="जैसे: Bulk_Import_Bookings",
-                key="bulk_gs_sheet_name"
-            )
+                    with st.spinner(f"⏳ {len(df_upload)} गाड़ियाँ सेव हो रही हैं..."):
+                        total = len(df_upload)
+                        for index, row in df_upload.iterrows():
+                            try:
+                                def clean_num(val):
+                                    try: return float(val) if pd.notna(val) else 0
+                                    except: return 0
+                                def clean_str(val):
+                                    return str(val).strip() if pd.notna(val) and str(val).lower() != "nan" else ""
 
-            if st.button("🔄 Google Sheet से Data Load करें", type="secondary", use_container_width=True, key="bulk_gs_load"):
-                try:
-                    db = connect_to_sheet_booking()
-                    raw_data = db.worksheet(source_sheet).get_all_values()
-                    if len(raw_data) <= 1:
-                        st.warning("⚠️ Source sheet में data नहीं मिला या सिर्फ header है।")
-                    else:
-                        header = raw_data[0]
-                        df_gs = pd.DataFrame(raw_data[1:], columns=header)
-                        st.session_state["bulk_gs_df"] = df_gs
-                        st.success(f"✅ {len(df_gs)} rows Google Sheet `{source_sheet}` से load हो गईं!")
-                except Exception as e:
-                    st.error(f"❌ Google Sheet से data load नहीं हो पाया: {e}")
-                    st.info("Sheet का नाम सही है? Sheet Setup tab चलाकर worksheet create कर लें।")
+                                date_str    = clean_str(row.get("Date (YYYY-MM-DD)", "")) or str(datetime.date.today())
+                                from_loc    = clean_str(row.get("From", "Kashipur"))
+                                company     = clean_str(row.get("Company", "Other"))
+                                owner_rate  = clean_num(row.get("Owner Rate", 0))
+                                comp_rate   = clean_num(row.get("Company Rate", 0))
+                                weight      = clean_num(row.get("Weight", 0))
+                                truck_no    = clean_str(row.get("Truck No", ""))
+                                to_loc      = clean_str(row.get("To", ""))
+                                gr_no       = clean_str(row.get("GR No", "N/A"))
+                                uni_amt     = clean_num(row.get("Universal Amt", 0))
+                                comments    = clean_str(row.get("Comments", ""))
+                                ish_amt     = clean_num(row.get("Ishtyaque Profit", 0))
 
-            if st.session_state.get("bulk_gs_df") is not None and not st.session_state.get("bulk_gs_df", pd.DataFrame()).empty:
-                df_gs = st.session_state["bulk_gs_df"]
-                st.markdown(f"**📋 {len(df_gs)} गाड़ियाँ Google Sheet से मिलीं — चेक करें:**")
-                st.dataframe(df_gs, use_container_width=True, height=250)
+                                if not truck_no or not to_loc:
+                                    error_count += 1; continue
 
-                if st.button("🚀 सभी गाड़ियाँ सेव करें (Google Sheet से)", type="primary", use_container_width=True, key="bulk_save_gs"):
-                    _process_bulk_bookings(df_gs)
-                    if st.button("🔄 नया Import करें", key="clear_gs_bulk"):
-                        if "bulk_gs_df" in st.session_state:
-                            del st.session_state["bulk_gs_df"]
-                        st.rerun()
+                                comp_freight   = int(weight * comp_rate) + int(uni_amt)
+                                owner_freight  = int(weight * owner_rate)
+                                final_uni_amt  = int(uni_amt * 0.99) if uni_amt > 0 else 0
+                                trip_id = f"TRP-{datetime.datetime.now().strftime('%y%m%d%H%M%S')}{index}"
 
-# Note: Tab 1 and Tab 2 ka code aapke paste jaisa hi rakha hai (sirf Tab 3 update kiya hai)
+                                row_data = [
+                                    date_str, from_loc, company,
+                                    owner_rate, comp_rate, weight,
+                                    truck_no, to_loc,
+                                    gr_no if gr_no else "N/A",
+                                    int(uni_amt), comments,
+                                    comp_freight, owner_freight,
+                                    final_uni_amt, trip_id, int(ish_amt)
+                                ]
+                                if save_booking_to_db(row_data):
+                                    save_to_ledgers(
+                                        date_str, trip_id, gr_no, truck_no, to_loc,
+                                        comp_freight, owner_freight, final_uni_amt, int(ish_amt)
+                                    )
+                                    success_count += 1
+                                    time.sleep(0.1) 
+                                else:
+                                    error_count += 1
+
+                                progress_bar.progress(
+                                    (index + 1) / total,
+                                    text=f"✅ {success_count} सेव | ⚠️ {error_count} skip"
+                                )
+                            except: error_count += 1; continue
+
+                    invalidate_sheet_cache()
+                    if success_count > 0:
+                        st.success(f"🎊 {success_count} गाड़ियाँ सफलतापूर्वक सेव हो गईं!")
+                    if error_count > 0:
+                        st.warning(f"⚠️ {error_count} rows skip हुईं (गाड़ी नंबर या Destination खाली था)।")
+
+            except Exception as e:
+                st.error(f"❌ Excel फाइल पढ़ने में दिक्कत: {e}")

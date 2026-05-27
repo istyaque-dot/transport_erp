@@ -60,6 +60,568 @@ def save_advance_to_db(date_val, trip_id, truck_no, mode, remarks, amount):
         st.error(f"Advance save error: {e}")
         return False
 
+
+# ==========================================
+# 📥 BULK ADVANCE UPLOAD HELPERS
+# ==========================================
+import io
+
+
+def _clean_str(v, default=""):
+    if v is None:
+        return default
+    try:
+        if pd.isna(v):
+            return default
+    except Exception:
+        pass
+    return str(v).strip()
+
+
+def _norm_key(v):
+    s = _clean_str(v, "")
+    # GR 176, 176.0, gr-176 -> 176
+    s = s.replace("GR", "").replace("Gr", "").replace("gr", "")
+    s = s.replace("G.R.", "").replace("G.R", "")
+    s = s.replace("-", "").replace("/", "").replace(" ", "")
+    try:
+        if s.endswith(".0"):
+            s = s[:-2]
+        # numeric strings like 176.00
+        f = float(s)
+        if f.is_integer():
+            s = str(int(f))
+    except Exception:
+        pass
+    return s.upper().strip()
+
+
+def _clean_amount(v):
+    s = _clean_str(v, "0").replace(",", "").replace("₹", "").strip()
+    try:
+        return int(round(float(s)))
+    except Exception:
+        return 0
+
+
+def _parse_date(v):
+    if v is None or _clean_str(v, "") == "":
+        return str(datetime.date.today())
+    try:
+        dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            return str(datetime.date.today())
+        return str(dt.date())
+    except Exception:
+        return str(datetime.date.today())
+
+
+def _build_bulk_advance_template():
+    cols = ["GR No", "Payment Date", "Amount", "Mode", "Bank/UTR", "Remark"]
+    sample = pd.DataFrame([
+        {"GR No": "176", "Payment Date": str(datetime.date.today()), "Amount": 49500, "Mode": "Cash", "Bank/UTR": "", "Remark": "Advance paid"},
+        {"GR No": "177", "Payment Date": str(datetime.date.today()), "Amount": 22390, "Mode": "Canara 311", "Bank/UTR": "UTR123", "Remark": "Advance paid"},
+    ], columns=cols)
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        sample.to_excel(writer, index=False, sheet_name="BulkAdvance")
+    return out.getvalue()
+
+
+@st.cache_data(ttl=300)
+def get_all_advances():
+    try:
+        db = connect_to_sheet()
+        data = db.worksheet("Advances").get_all_values()
+        if len(data) <= 1:
+            return pd.DataFrame()
+        return pd.DataFrame(data[1:], columns=data[0])
+    except Exception:
+        return pd.DataFrame()
+
+
+def _is_duplicate_advance(df_adv, trip_id, date_str, amount):
+    if df_adv is None or df_adv.empty:
+        return False
+    try:
+        # Expected schema: Date, Trip ID, Truck, Cash Amt, Bank Amt, Bank Name, Diesel Amt, Pump Name, Total Amt
+        c_date = df_adv.iloc[:, 0].astype(str).str.strip()
+        c_trip = df_adv.iloc[:, 1].astype(str).str.strip()
+        c_total = pd.to_numeric(df_adv.iloc[:, 8].astype(str).str.replace(',', '').str.replace('₹',''), errors='coerce').fillna(0).astype(int)
+        return bool(((c_date == str(date_str)) & (c_trip == str(trip_id)) & (c_total == int(amount))).any())
+    except Exception:
+        return False
+
+
+def _mode_to_advance_row(date_val, trip_id, truck_no, mode, amount):
+    amt = int(amount)
+    cash_amt = amt if mode == "Cash" else 0
+    bank_amt = amt if mode in ["Canara 311", "Canara 41", "BOB", "Canara 1747"] else 0
+    diesel_amt = amt if mode == "Pump (Shekh Filling)" else 0
+    bank_name = mode if bank_amt else "N/A"
+    pump_name = "Shekh Filling" if diesel_amt else "N/A"
+    return [str(date_val), str(trip_id), str(truck_no), cash_amt, bank_amt, bank_name, diesel_amt, pump_name, amt]
+
+
+def save_bulk_advances_to_db(advance_rows):
+    try:
+        db = connect_to_sheet()
+        ws_adv = db.worksheet("Advances")
+        adv_values = []
+        ledger_map = {}
+        for r in advance_rows:
+            date_val = r["date"]
+            trip_id = r["trip_id"]
+            truck_no = r["truck_no"]
+            mode = r["mode"]
+            amount = int(r["amount"])
+            remarks = r.get("remarks", "")
+            adv_values.append(_mode_to_advance_row(date_val, trip_id, truck_no, mode, amount))
+
+            s_map = {
+                "Cash": "Cash_Ledger",
+                "Canara 311": "Canara_311_Ledger",
+                "Canara 41": "Canara_41_Ledger",
+                "BOB": "BOB_Ledger",
+                "Canara 1747": "canara_1747",
+                "Pump (Shekh Filling)": "Shekh_Filling_Ledger",
+            }
+            ledger_name = s_map.get(mode)
+            if ledger_name:
+                if mode == "Canara 1747":
+                    ledger_row = [str(date_val), "Advance", f"Truck: {truck_no}", -amount]
+                else:
+                    ledger_row = [str(date_val), str(trip_id), "Debit", f"Advance: {truck_no} | {remarks}", -amount]
+                ledger_map.setdefault(ledger_name, []).append(ledger_row)
+
+        if adv_values:
+            ws_adv.append_rows(adv_values, value_input_option="USER_ENTERED")
+        for ledger_name, rows in ledger_map.items():
+            try:
+                db.worksheet(ledger_name).append_rows(rows, value_input_option="USER_ENTERED")
+            except Exception:
+                # Ledger sheet missing हो तो Advance save को fail न करें
+                pass
+        invalidate_sheet_cache()
+        try:
+            get_all_advances.clear()
+            get_all_trips.clear()
+        except Exception:
+            pass
+        return True, f"{len(adv_values)} advance rows saved"
+    except Exception as e:
+        return False, str(e)
+
+
+
+# ==========================================
+# 📥 BULK ADVANCE FROM GOOGLE SHEET
+# ==========================================
+BULK_ADVANCE_SHEET_NAME = "Bulk_Advance"
+BULK_ADVANCE_HEADERS = [
+    "Status", "GR No", "Payment Date", "Amount", "Mode", "Bank/UTR", "Remark", "Error", "Processed At"
+]
+
+
+def _ensure_bulk_advance_sheet():
+    """Create Bulk_Advance sheet and headers if missing. Existing data is not overwritten."""
+    db = connect_to_sheet()
+    try:
+        ws = db.worksheet(BULK_ADVANCE_SHEET_NAME)
+    except Exception:
+        ws = db.add_worksheet(title=BULK_ADVANCE_SHEET_NAME, rows=1000, cols=len(BULK_ADVANCE_HEADERS) + 2)
+        ws.update(f"A1:I1", [BULK_ADVANCE_HEADERS])
+        invalidate_sheet_cache()
+        return ws
+
+    try:
+        first_row = ws.row_values(1)
+        if not first_row:
+            ws.update(f"A1:I1", [BULK_ADVANCE_HEADERS])
+        else:
+            existing = [str(x).strip() for x in first_row]
+            # Fill missing headers to the right without touching existing rows.
+            if existing[:len(BULK_ADVANCE_HEADERS)] != BULK_ADVANCE_HEADERS:
+                # If the row is blank/old, set a standard header row. Data rows remain unchanged.
+                ws.update(f"A1:I1", [BULK_ADVANCE_HEADERS])
+        invalidate_sheet_cache()
+    except Exception:
+        pass
+    return ws
+
+
+def _get_header_index(headers, name):
+    wanted = str(name).strip().lower()
+    for i, h in enumerate(headers):
+        if str(h).strip().lower() == wanted:
+            return i
+    return None
+
+
+def _cell_from_row(row, headers, *names, default=""):
+    for name in names:
+        idx = _get_header_index(headers, name)
+        if idx is not None and idx < len(row):
+            return row[idx]
+    return default
+
+
+@st.cache_data(ttl=120)
+def _load_bulk_advance_sheet_values():
+    try:
+        db = connect_to_sheet()
+        values = db.worksheet(BULK_ADVANCE_SHEET_NAME).get_all_values()
+        return values
+    except Exception:
+        return []
+
+
+def _build_bulk_advance_gsheet_template_df():
+    return pd.DataFrame([
+        {"Status": "PENDING", "GR No": "176", "Payment Date": str(datetime.date.today()), "Amount": 49500, "Mode": "Cash", "Bank/UTR": "", "Remark": "Advance paid", "Error": "", "Processed At": ""},
+        {"Status": "PENDING", "GR No": "177", "Payment Date": str(datetime.date.today()), "Amount": 22390, "Mode": "Canara 311", "Bank/UTR": "UTR123", "Remark": "Advance paid", "Error": "", "Processed At": ""},
+    ], columns=BULK_ADVANCE_HEADERS)
+
+
+def _prepare_bulk_advance_preview_from_rows(raw_values, df_trips):
+    if not raw_values or len(raw_values) <= 1:
+        return [], [], []
+
+    headers = [str(x).strip() for x in raw_values[0]]
+    data_rows = raw_values[1:]
+
+    # Build GR map from Bookings
+    gr_map = {}
+    duplicates = set()
+    for _, tr in df_trips.iterrows():
+        gr = _norm_key(safe_cell(tr, 8, ""))
+        if not gr or gr in ["NA", "N/A"]:
+            continue
+        if gr in gr_map:
+            duplicates.add(gr)
+        gr_map.setdefault(gr, []).append(tr)
+
+    df_adv = get_all_advances()
+    allowed_modes = ["Cash", "Canara 311", "Canara 41", "BOB", "Canara 1747", "Pump (Shekh Filling)", "Other"]
+    preview_rows = []
+    ready_rows = []
+    status_updates = []
+
+    pending_count = 0
+    for row_num, row in enumerate(data_rows, start=2):
+        current_status = _clean_str(_cell_from_row(row, headers, "Status", default=""), "").upper()
+        if current_status not in ["", "PENDING"]:
+            continue
+        pending_count += 1
+        if pending_count > 100:
+            break
+
+        gr_raw = _cell_from_row(row, headers, "GR No", "GR", "Gr No", default="")
+        gr_key = _norm_key(gr_raw)
+        amount = _clean_amount(_cell_from_row(row, headers, "Amount", "Amt", "Advance", default="0"))
+        date_str = _parse_date(_cell_from_row(row, headers, "Payment Date", "Date", default=""))
+        mode = _clean_str(_cell_from_row(row, headers, "Mode", "Payment Mode", default="Cash"), "Cash")
+        if mode not in allowed_modes:
+            mode = "Other"
+        bank_utr = _clean_str(_cell_from_row(row, headers, "Bank/UTR", "UTR", "Bank", default=""), "")
+        remark = _clean_str(_cell_from_row(row, headers, "Remark", "Remarks", default=""), "")
+        remarks = " | ".join([x for x in [bank_utr, remark] if x])
+
+        status = "✅ Ready"
+        reason = ""
+        tr = None
+        if not gr_key:
+            status, reason = "❌ Error", "GR No blank"
+        elif gr_key not in gr_map:
+            status, reason = "❌ Error", "GR booking में नहीं मिला"
+        elif gr_key in duplicates or len(gr_map.get(gr_key, [])) > 1:
+            status, reason = "⚠️ Error", "Same GR की multiple bookings मिलीं"
+        elif amount <= 0:
+            status, reason = "❌ Error", "Amount invalid"
+        else:
+            tr = gr_map[gr_key][0]
+            trip_id = safe_cell(tr, 14, "")
+            if _is_duplicate_advance(df_adv, trip_id, date_str, amount):
+                status, reason = "⚠️ Duplicate", "Same GR + Date + Amount already saved"
+
+        if tr is not None:
+            trip_id = safe_cell(tr, 14, "")
+            truck_no = safe_cell(tr, 6, "")
+            dest = safe_cell(tr, 7, "")
+            book_date = safe_cell(tr, 0, "")
+        else:
+            trip_id = truck_no = dest = book_date = ""
+
+        out = {
+            "Sheet Row": row_num,
+            "GR No": _clean_str(gr_raw),
+            "Payment Date": date_str,
+            "Amount": amount,
+            "Mode": mode,
+            "Truck No": truck_no,
+            "Destination": dest,
+            "Trip ID": trip_id,
+            "Booking Date": book_date,
+            "Status": status,
+            "Reason": reason,
+        }
+        preview_rows.append(out)
+        if status == "✅ Ready":
+            ready_rows.append({
+                "source_row": row_num,
+                "date": date_str,
+                "trip_id": trip_id,
+                "truck_no": truck_no,
+                "mode": mode,
+                "amount": amount,
+                "remarks": remarks,
+            })
+        else:
+            status_updates.append({"source_row": row_num, "status": "ERROR" if "Error" in status else "DUPLICATE", "error": reason})
+
+    return preview_rows, ready_rows, status_updates
+
+
+def _update_bulk_advance_statuses(row_statuses):
+    """Batch update Status/Error/Processed At columns for Bulk_Advance rows."""
+    if not row_statuses:
+        return
+    db = connect_to_sheet()
+    ws = db.worksheet(BULK_ADVANCE_SHEET_NAME)
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updates = []
+    # Columns: A Status, H Error, I Processed At
+    for item in row_statuses:
+        r = int(item["source_row"])
+        updates.append({"range": f"A{r}", "values": [[item.get("status", "")]]})
+        updates.append({"range": f"H{r}", "values": [[item.get("error", "")]]})
+        updates.append({"range": f"I{r}", "values": [[ts]]})
+    ws.batch_update(updates)
+    invalidate_sheet_cache()
+    try:
+        _load_bulk_advance_sheet_values.clear()
+    except Exception:
+        pass
+
+
+def _show_bulk_advance_from_google_sheet(df_trips):
+    with st.expander("📥 Bulk Advance from Google Sheet", expanded=False):
+        st.caption("Google Sheet में `Bulk_Advance` tab में rows डालें. Status खाली/PENDING rows ही process होंगी. DONE rows दोबारा process नहीं होंगी.")
+        c1, c2, c3 = st.columns([1, 1, 2])
+        with c1:
+            if st.button("🧩 Bulk_Advance tab बनाएं/check", key="bulk_adv_sheet_setup", use_container_width=True):
+                try:
+                    _ensure_bulk_advance_sheet()
+                    st.success("Bulk_Advance tab/header ready है।")
+                except Exception as e:
+                    st.error(f"Sheet setup error: {e}")
+        with c2:
+            if st.button("🔄 Bulk data refresh", key="bulk_adv_sheet_refresh", use_container_width=True):
+                try:
+                    _load_bulk_advance_sheet_values.clear()
+                except Exception:
+                    pass
+                invalidate_sheet_cache()
+                st.rerun()
+        with c3:
+            st.download_button(
+                "⬇️ Template Excel download",
+                data=_build_bulk_advance_template(),
+                file_name="bulk_advance_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        st.markdown("""
+**Bulk_Advance columns:** `Status | GR No | Payment Date | Amount | Mode | Bank/UTR | Remark | Error | Processed At`  
+`Status` खाली या `PENDING` रखें. Process के बाद app `DONE / ERROR / DUPLICATE` mark करेगा.
+""")
+
+        try:
+            _ensure_bulk_advance_sheet()
+            raw_values = _load_bulk_advance_sheet_values()
+        except Exception as e:
+            st.error(f"Bulk_Advance read error: {e}")
+            return
+
+        if not raw_values or len(raw_values) <= 1:
+            st.info("Bulk_Advance tab में अभी pending rows नहीं हैं।")
+            return
+
+        preview_rows, ready_rows, problem_statuses = _prepare_bulk_advance_preview_from_rows(raw_values, df_trips)
+        if not preview_rows:
+            st.info("कोई PENDING/blank status row नहीं मिली।")
+            return
+
+        st.markdown("#### Preview — Google Sheet Bulk Advance")
+        st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+        total_amt = sum(int(r["amount"]) for r in ready_rows)
+        st.info(f"Ready: {len(ready_rows)} | Problems: {len(problem_statuses)} | Total ready amount: ₹{total_amt:,}")
+
+        confirm = st.checkbox("Preview check हो गया — Google Sheet की ✅ Ready rows save करें", key="bulk_adv_gsheet_confirm")
+        if st.button("🚀 Confirm & Process Bulk_Advance Sheet", type="primary", use_container_width=True, disabled=(not confirm or not ready_rows)):
+            progress = st.progress(0, text="Bulk_Advance process हो रहा है...")
+            saved_total = 0
+            errors = []
+            done_statuses = []
+            for start in range(0, len(ready_rows), 50):
+                batch = ready_rows[start:start+50]
+                ok, msg = save_bulk_advances_to_db(batch)
+                if ok:
+                    saved_total += len(batch)
+                    for r in batch:
+                        done_statuses.append({"source_row": r["source_row"], "status": "DONE", "error": ""})
+                    progress.progress(min(saved_total / max(len(ready_rows), 1), 1.0), text=f"Saved {saved_total}/{len(ready_rows)}")
+                else:
+                    errors.append(msg)
+                    break
+
+            try:
+                _update_bulk_advance_statuses(done_statuses + problem_statuses)
+            except Exception as e:
+                st.warning(f"Advance saved, लेकिन Bulk_Advance status update में issue आया: {e}")
+
+            if errors:
+                st.error(f"Bulk save error after {saved_total} rows: {errors[0]}")
+            else:
+                st.success(f"✅ Bulk_Advance Complete: {saved_total} rows saved. Total ₹{total_amt:,}")
+                st.cache_data.clear()
+                time.sleep(1)
+                st.rerun()
+
+
+def _show_bulk_advance_upload(df_trips):
+    with st.expander("📥 Bulk Advance Upload — Excel से GR based advance entry", expanded=False):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.download_button(
+                "⬇️ Template डाउनलोड करें",
+                data=_build_bulk_advance_template(),
+                file_name="bulk_advance_upload_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with c2:
+            st.caption("Minimum columns: GR No, Amount. Blank/invalid rows skip होंगी. पहले preview आएगा, फिर save होगा.")
+
+        bulk_file = st.file_uploader("Bulk Advance Excel/CSV upload करें", type=["xlsx", "xls", "csv"], key="bulk_advance_upload_file_v2")
+        if bulk_file is None:
+            return
+        try:
+            df_bulk = pd.read_csv(bulk_file) if bulk_file.name.lower().endswith(".csv") else pd.read_excel(bulk_file)
+        except Exception as e:
+            st.error(f"Excel read error: {e}")
+            return
+        if df_bulk.empty:
+            st.warning("Excel खाली है।")
+            return
+        if len(df_bulk) > 100:
+            st.warning("एक बार में max 100 rows process होंगी। Extra rows ignore कर दी गई हैं।")
+            df_bulk = df_bulk.head(100)
+
+        # Build GR map from Bookings
+        gr_map = {}
+        duplicates = set()
+        for _, tr in df_trips.iterrows():
+            gr = _norm_key(safe_cell(tr, 8, ""))
+            if not gr or gr in ["NA", "N/A"]:
+                continue
+            if gr in gr_map:
+                duplicates.add(gr)
+            gr_map.setdefault(gr, []).append(tr)
+
+        df_adv = get_all_advances()
+        preview_rows = []
+        ready_rows = []
+        allowed_modes = ["Cash", "Canara 311", "Canara 41", "BOB", "Canara 1747", "Pump (Shekh Filling)", "Other"]
+
+        for i, row in df_bulk.iterrows():
+            gr_raw = row.get("GR No", row.get("GR", row.get("Gr No", "")))
+            gr_key = _norm_key(gr_raw)
+            amount = _clean_amount(row.get("Amount", row.get("Amt", row.get("Advance", 0))))
+            date_str = _parse_date(row.get("Payment Date", row.get("Date", "")))
+            mode = _clean_str(row.get("Mode", row.get("Payment Mode", "Cash")), "Cash")
+            if mode not in allowed_modes:
+                mode = "Other"
+            bank_utr = _clean_str(row.get("Bank/UTR", row.get("UTR", row.get("Bank", ""))), "")
+            remark = _clean_str(row.get("Remark", row.get("Remarks", "")), "")
+            remarks = " | ".join([x for x in [bank_utr, remark] if x])
+
+            status = "✅ Ready"
+            reason = ""
+            tr = None
+            if not gr_key:
+                status, reason = "❌ Skip", "GR No blank"
+            elif gr_key not in gr_map:
+                status, reason = "❌ Skip", "GR booking में नहीं मिला"
+            elif gr_key in duplicates or len(gr_map.get(gr_key, [])) > 1:
+                status, reason = "⚠️ Skip", "Same GR की multiple bookings मिलीं"
+            elif amount <= 0:
+                status, reason = "❌ Skip", "Amount invalid"
+            else:
+                tr = gr_map[gr_key][0]
+                trip_id = safe_cell(tr, 14, "")
+                if _is_duplicate_advance(df_adv, trip_id, date_str, amount):
+                    status, reason = "⚠️ Duplicate", "Same GR + Date + Amount already saved"
+
+            if tr is not None:
+                trip_id = safe_cell(tr, 14, "")
+                truck_no = safe_cell(tr, 6, "")
+                dest = safe_cell(tr, 7, "")
+                book_date = safe_cell(tr, 0, "")
+            else:
+                trip_id = truck_no = dest = book_date = ""
+
+            out = {
+                "Row": i + 2,
+                "GR No": _clean_str(gr_raw),
+                "Payment Date": date_str,
+                "Amount": amount,
+                "Mode": mode,
+                "Truck No": truck_no,
+                "Destination": dest,
+                "Trip ID": trip_id,
+                "Booking Date": book_date,
+                "Status": status,
+                "Reason": reason,
+            }
+            preview_rows.append(out)
+            if status == "✅ Ready":
+                ready_rows.append({
+                    "date": date_str,
+                    "trip_id": trip_id,
+                    "truck_no": truck_no,
+                    "mode": mode,
+                    "amount": amount,
+                    "remarks": remarks,
+                })
+
+        st.markdown("#### Preview")
+        st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+        st.info(f"Ready: {len(ready_rows)} | Total rows: {len(preview_rows)}")
+        confirm = st.checkbox("Preview check हो गया — सिर्फ ✅ Ready rows save करें", key="bulk_adv_confirm_v2")
+        if st.button("🚀 Confirm & Save Bulk Advance", type="primary", use_container_width=True, disabled=(not confirm or not ready_rows)):
+            progress = st.progress(0, text="Bulk advance save हो रहा है...")
+            saved_total = 0
+            errors = []
+            for start in range(0, len(ready_rows), 50):
+                batch = ready_rows[start:start+50]
+                ok, msg = save_bulk_advances_to_db(batch)
+                if ok:
+                    saved_total += len(batch)
+                    progress.progress(min(saved_total / max(len(ready_rows), 1), 1.0), text=f"Saved {saved_total}/{len(ready_rows)}")
+                else:
+                    errors.append(msg)
+                    break
+            if errors:
+                st.error(f"Bulk save error after {saved_total} rows: {errors[0]}")
+            else:
+                st.success(f"✅ Bulk Advance Complete: {saved_total} rows saved. Total ₹{sum(r['amount'] for r in ready_rows):,}")
+                st.cache_data.clear()
+                time.sleep(1)
+                st.rerun()
+
+
 # ==========================================
 # 🎨 CSS
 # ==========================================
@@ -245,6 +807,9 @@ def show_advance_page():
     if df_trips.empty:
         st.info("⚠️ कोई बुकिंग नहीं मिली। पहले 'बुकिंग' पेज से गाड़ी लगाएँ।")
         return
+
+    # ── Bulk Advance Upload ──
+    _show_bulk_advance_upload(df_trips)
 
     # ── Trip selector: full list + global search sequence ──
     df_all = df_trips.copy()
