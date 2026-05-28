@@ -170,7 +170,7 @@ def update_ledgers(date_val, trip_id, gr_no, truck_no, dest, comp_amt, owner_amt
 # Reason: बाकी pages (Advance/POD/Reports/Receivable) Google Sheets से पढ़ते हैं.
 # इसलिए Booking भी Sheets में save/read/update करेगी, नहीं तो data गायब दिखेगा.
 # ==========================================
-from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell
+from sheet_utils import connect_to_sheet as connect_to_sheet_booking, invalidate_sheet_cache, format_trip_label, filter_trip_dataframe, safe_cell, worksheet_url
 
 def save_booking_to_db(row_data):
     try:
@@ -593,12 +593,19 @@ def render_bulk_booking_from_google_sheet():
     st.markdown("### 📥 Bulk Booking Edit from Google Sheet")
     st.caption("Bulk_Booking_Edit tab में data भरें. Blank cell = existing booking value change नहीं होगी. GR No existing booking match key रहेगा.")
 
-    c1, c2 = st.columns([1, 2])
+    c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         if st.button("🧩 Bulk_Booking_Edit tab बनाएं/check", use_container_width=True, key="bb_create_tab"):
             ok, msg = ensure_bulk_booking_sheet()
             st.success(msg) if ok else st.error(msg)
     with c2:
+        try:
+            # Ensure tab exists before creating the direct link.
+            ensure_bulk_booking_sheet()
+            st.link_button("🔗 Bulk_Booking_Edit Sheet खोलें", worksheet_url(BULK_BOOKING_SHEET_NAME), use_container_width=True)
+        except Exception as e:
+            st.warning(f"Sheet link नहीं बन पाया: {e}")
+    with c3:
         st.info("Columns: Status, GR No, Date, Truck No, Company, From, Destination, Weight, Company Rate, Owner Rate, Universal Amt, Ishtyaque Profit, Comments")
 
     if st.button("🔍 Bulk_Booking_Edit Preview Load करें", use_container_width=True, key="bb_preview_btn"):

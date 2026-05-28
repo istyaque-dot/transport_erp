@@ -234,6 +234,32 @@ def connect_to_sheet():
     return CachedSpreadsheet()
 
 
+
+
+def spreadsheet_url() -> str:
+    """Return the exact Google Sheet workbook URL used by this app."""
+    ss = _raw_spreadsheet()
+    sheet_id = getattr(ss, "id", None)
+    if sheet_id:
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+    return getattr(ss, "url", "")
+
+
+def worksheet_url(sheet_name: str) -> str:
+    """Return direct URL for a specific worksheet/tab by gid. Creates no data."""
+    ss = _raw_spreadsheet()
+    ws = _raw_worksheet(sheet_name)
+    sheet_id = getattr(ss, "id", None)
+    gid = getattr(ws, "id", None)
+    if gid is None:
+        try:
+            gid = ws._properties.get("sheetId")
+        except Exception:
+            gid = None
+    base = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit" if sheet_id else getattr(ss, "url", "")
+    return f"{base}#gid={gid}" if gid is not None else base
+
+
 def get_or_create_worksheet(sheet_name, rows=1000, cols=26):
     try:
         _raw_worksheet(sheet_name)
